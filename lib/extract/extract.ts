@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import { parseHTML } from "linkedom";
 import { createHash } from "crypto";
 
 export interface ExtractedPage {
@@ -35,8 +35,8 @@ export function extractPage(html: string, url: string): ExtractedPage {
 
   let mainText: string | null = null;
   try {
-    const dom = new JSDOM(html, { url });
-    const reader = new Readability(dom.window.document);
+    const { document } = parseHTML(html);
+    const reader = new Readability(document as unknown as Document);
     const article = reader.parse();
     mainText = article?.textContent?.replace(/\s+/g, " ").trim() || null;
   } catch {
