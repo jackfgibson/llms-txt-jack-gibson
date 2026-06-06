@@ -26,10 +26,15 @@ export default function Home() {
     setError(null);
     setLoading(true);
     try {
+      // Normalize: prepend https:// if no protocol given (e.g. "tryprofound.com")
+      const normalized =
+        url.startsWith("http://") || url.startsWith("https://")
+          ? url
+          : `https://${url}`;
       const res = await fetch("/api/sites", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: normalized }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -74,11 +79,10 @@ export default function Home() {
           <div className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 focus-within:ring-3 focus-within:ring-ring/50 focus-within:border-ring transition-all">
             <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
             <Input
-              type="url"
-              placeholder="https://example.com"
+              type="text"
+              placeholder="example.com"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              required
               disabled={loading}
               className="flex-1 border-none bg-transparent shadow-none focus-visible:ring-0 focus-visible:border-none h-9 px-1 text-sm"
             />
