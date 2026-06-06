@@ -10,9 +10,8 @@ import { Separator } from "@/components/ui/separator";
 
 const FEATURES = [
   "Respects robots.txt",
-  "No API key required",
   "Spec-validated output",
-  "Up to 50 pages crawled",
+  "Dynamic crawl configuration",
 ];
 
 export default function Home() {
@@ -69,7 +68,7 @@ export default function Home() {
               Generate <code className="font-mono text-2xl">llms.txt</code> for any site
             </h1>
             <p className="text-sm text-muted-foreground">
-              Crawls your site, curates the key pages, and produces a spec-valid file in seconds.
+              Crawls any site, curates the key pages, and produces a spec-valid file in seconds.
             </p>
           </div>
         </div>
