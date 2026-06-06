@@ -2,9 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { use } from "react";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, FlaskConicalIcon, MoreHorizontalIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -20,7 +31,10 @@ interface Crawl {
   status: "pending" | "crawling" | "generating" | "completed" | "failed";
   stats: Record<string, number> | null;
   progress: { phase?: string; done?: number; total?: number } | null;
+  providers: string[] | null;
+  createdAt: string;
   finishedAt: string | null;
+  generations: Generation[]; // crawl-specific, always present after completion
 }
 
 interface Generation {
@@ -39,8 +53,16 @@ interface Generation {
 
 interface SiteData {
   site: { id: string; url: string; slug: string };
-  latestGenerations: Generation[];
   recentCrawls: Crawl[];
+}
+
+interface ChangeEvent {
+  id: string;
+  fromCrawlId: string | null;
+  toCrawlId: string;
+  diff: { added: string[]; removed: string[]; changed: string[] } | null;
+  regenerated: boolean;
+  createdAt: string;
 }
 
 const PHASE_LABEL: Record<string, string> = {
@@ -97,9 +119,13 @@ function ScoreRing({ score }: { score: number }) {
 function GenerationPanel({
   generation,
   slug,
+  hostname,
+  isLatest,
 }: {
   generation: Generation;
   slug: string | null;
+  hostname: string | null;
+  isLatest: boolean;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -107,6 +133,20 @@ function GenerationPanel({
     navigator.clipboard.writeText(generation.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function download() {
+    const label = PROVIDER_MODEL[generation.provider] ?? generation.provider;
+    const filename = hostname
+      ? `llms-${hostname}-v${generation.version}-${label}.txt`
+      : `llms-v${generation.version}-${label}.txt`;
+    const blob = new Blob([generation.content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -157,7 +197,12 @@ function GenerationPanel({
       {/* Content */}
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
-          <span className="text-xs font-mono text-muted-foreground">llms.txt</span>
+          <span className="text-xs font-mono text-muted-foreground">
+            llms.txt
+            {!isLatest && (
+              <span className="ml-2 text-amber-600 dark:text-amber-400">(historical — not the live version)</span>
+            )}
+          </span>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={copy} className="h-7 gap-1.5 text-xs">
               {copied ? (
@@ -166,7 +211,11 @@ function GenerationPanel({
                 <><CopyIcon className="size-3" />Copy</>
               )}
             </Button>
-            {slug && (
+            <Button size="sm" variant="ghost" onClick={download} className="h-7 gap-1.5 text-xs">
+              <DownloadIcon className="size-3" />
+              Download
+            </Button>
+            {slug && isLatest && (
               <a
                 href={`/${slug}/llms.txt`}
                 target="_blank"
@@ -174,7 +223,7 @@ function GenerationPanel({
                 className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
               >
                 <ExternalLinkIcon className="size-3" />
-                Raw
+                Live URL
               </a>
             )}
           </div>
@@ -193,8 +242,27 @@ export default function CrawlPage({
   params: Promise<{ id: string }>;
 }) {
   const { id: crawlId } = use(params);
+  const router = useRouter();
   const [crawl, setCrawl] = useState<Crawl | null>(null);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
+  const [changeEvent, setChangeEvent] = useState<ChangeEvent | null | undefined>(undefined);
+  const [rechecking, setRechecking] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [evalRunning, setEvalRunning] = useState(false);
+  const [evalReport, setEvalReport] = useState<{
+    pairs: Array<{
+      question: string;
+      groundTruth: string;
+      coldAnswer: string;
+      coldCorrect: boolean;
+      withContextAnswer: string;
+      withContextCorrect: boolean;
+    }>;
+    coldScore: number;
+    withContextScore: number;
+    lift: number;
+  } | null>(null);
+  const [evalError, setEvalError] = useState<string | null>(null);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -207,8 +275,17 @@ export default function CrawlPage({
         setCrawl(data);
 
         if (data.status === "completed" || data.status === "failed") {
+          // Fetch site info for the history panel and site metadata
           const siteRes = await fetch(`/api/sites/${data.siteId}`);
           if (siteRes.ok) setSiteData(await siteRes.json());
+          // Fetch change_event for this crawl
+          const evRes = await fetch(`/api/crawls/${crawlId}/change-event`);
+          if (evRes.ok) {
+            const ev = await evRes.json();
+            setChangeEvent(ev ?? null);
+          } else {
+            setChangeEvent(null);
+          }
           return;
         }
       } catch {
@@ -221,11 +298,103 @@ export default function CrawlPage({
     return () => clearTimeout(timer);
   }, [crawlId]);
 
+  async function handleRecheck() {
+    if (!crawl || !siteData) return;
+    setRechecking(true);
+    try {
+      const res = await fetch(`/api/sites/${crawl.siteId}/crawl`, { method: "POST" });
+      if (!res.ok) {
+        toast.error("Re-check failed", { description: "Could not start a new crawl." });
+        return;
+      }
+      const { crawlId: newId } = await res.json();
+      toast("Re-check started!", {
+        description: "A new crawl is running. Redirecting…",
+        duration: 4000,
+      });
+      router.push(`/crawls/${newId}`);
+    } catch {
+      toast.error("Network error — please try again");
+    } finally {
+      setRechecking(false);
+    }
+  }
+
+  function triggerDownload(filename: string, content: string) {
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleDownloadSingle(provider: string) {
+    const gen = generations.find((g) => g.provider === provider);
+    if (!gen) return;
+    const label = PROVIDER_MODEL[provider] ?? provider;
+    const name = hostname ?? "site";
+    triggerDownload(`llms-${name}-v${gen.version}-${label}.txt`, gen.content);
+  }
+
+  async function handleDownloadAll() {
+    if (generations.length === 0) return;
+    setDownloading(true);
+    try {
+      if (generations.length === 1) {
+        handleDownloadSingle(generations[0].provider);
+        return;
+      }
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      const name = hostname ?? "site";
+      for (const gen of generations) {
+        const label = PROVIDER_MODEL[gen.provider] ?? gen.provider;
+        zip.file(`llms-${label}.txt`, gen.content);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `llms-${name}-v${generations[0]?.version ?? 1}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleRunEval() {
+    if (!crawl) return;
+    setEvalRunning(true);
+    setEvalError(null);
+    setEvalReport(null);
+    try {
+      const res = await fetch(`/api/sites/${crawl.siteId}/eval`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setEvalError(data.error ?? "Eval failed");
+        return;
+      }
+      setEvalReport(data);
+    } catch {
+      setEvalError("Network error — please try again");
+    } finally {
+      setEvalRunning(false);
+    }
+  }
+
   const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
-  const generations = (siteData?.latestGenerations ?? []).slice().sort(
+  // Use this crawl's own generations — not the site's latest version
+  const generations = (crawl?.generations ?? []).slice().sort(
     (a, b) => PROVIDER_ORDER.indexOf(a.provider) - PROVIDER_ORDER.indexOf(b.provider),
   );
   const site = siteData?.site;
+
+  // isLatestCrawl: this crawl is first in the history list (newest) or history hasn't loaded yet
+  const thisIndex = siteData?.recentCrawls.findIndex((c) => c.id === crawlId) ?? -1;
+  const isLatestCrawl = thisIndex <= 0;
   const isRunning =
     !crawl ||
     crawl.status === "pending" ||
@@ -257,27 +426,82 @@ export default function CrawlPage({
         </a>
 
         {/* Header */}
-        <div className="space-y-1">
-          {hostname ? (
-            <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
-          ) : (
-            <div className="h-7 w-48 rounded-md bg-muted animate-pulse" />
-          )}
-          <div className="flex items-center gap-2">
-            {crawl ? (
-              <Badge
-                variant={STATUS_VARIANT[crawl.status] ?? "secondary"}
-                className={crawl.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
-              >
-                {crawl.status}
-              </Badge>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            {hostname ? (
+              <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
             ) : (
-              <Badge variant="secondary">loading</Badge>
+              <div className="h-7 w-48 rounded-md bg-muted animate-pulse" />
             )}
-            {crawl?.stats?.sitemapUsed === 1 && (
-              <span className="text-xs text-muted-foreground">via sitemap</span>
-            )}
+            <div className="flex items-center gap-2">
+              {crawl ? (
+                <Badge
+                  variant={STATUS_VARIANT[crawl.status] ?? "secondary"}
+                  className={crawl.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
+                >
+                  {crawl.status}
+                </Badge>
+              ) : (
+                <Badge variant="secondary">loading</Badge>
+              )}
+              {crawl?.stats?.sitemapUsed === 1 && (
+                <span className="text-xs text-muted-foreground">via sitemap</span>
+              )}
+            </div>
           </div>
+
+          {crawl?.status === "completed" && (
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Download dropdown */}
+              {generations.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    disabled={downloading}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-accent transition-colors disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    {downloading ? <Spinner className="size-3.5" /> : <DownloadIcon className="size-3.5" />}
+                    Download
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-72">
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>This run</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {generations.map((g) => {
+                        const meta = PROVIDER_META[g.provider];
+                        return (
+                          <DropdownMenuItem key={g.provider} onClick={() => handleDownloadSingle(g.provider)} className="gap-2">
+                            <DownloadIcon className="size-3.5" />
+                            <img src={meta?.logo ?? "/providers/fallback.png"} alt="" className="w-4 h-4 object-contain" style={{ imageRendering: "pixelated" }} />
+                            {PROVIDER_MODEL[g.provider] ?? g.provider} — llms.txt
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuGroup>
+                    {generations.length > 1 && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={handleDownloadAll} className="gap-2">
+                          <DownloadIcon className="size-3.5" />
+                          All providers — .zip
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRecheck}
+                disabled={rechecking}
+                className="gap-1.5"
+              >
+                {rechecking ? <Spinner className="size-3.5" /> : <RefreshCwIcon className="size-3.5" />}
+                Re-check now
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Progress — visible while running */}
@@ -357,7 +581,12 @@ export default function CrawlPage({
 
             {generations.map((g) => (
               <TabsContent key={g.provider} value={g.provider}>
-                <GenerationPanel generation={g} slug={site?.slug ?? null} />
+                <GenerationPanel
+                  generation={g}
+                  slug={site?.slug ?? null}
+                  hostname={hostname}
+                  isLatest={isLatestCrawl}
+                />
               </TabsContent>
             ))}
           </Tabs>
@@ -378,6 +607,198 @@ export default function CrawlPage({
                 <p className="text-xs text-muted-foreground">{label}</p>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Diff panel — only when change_event exists (recrawl) */}
+        {changeEvent && (
+          <div className="rounded-xl border border-border p-5 space-y-3">
+            <p className="text-sm font-medium">Changes since last crawl</p>
+            {changeEvent.diff && (
+              changeEvent.diff.added.length === 0 &&
+              changeEvent.diff.removed.length === 0 &&
+              changeEvent.diff.changed.length === 0
+            ) ? (
+              <p className="text-xs text-muted-foreground">No content changes detected.</p>
+            ) : (
+              <div className="space-y-2 text-xs">
+                {changeEvent.diff?.added.length ? (
+                  <div>
+                    <p className="font-medium text-green-700 dark:text-green-400 mb-1">
+                      +{changeEvent.diff.added.length} added
+                    </p>
+                    <ul className="space-y-0.5 text-muted-foreground">
+                      {changeEvent.diff.added.slice(0, 5).map((u) => (
+                        <li key={u} className="truncate font-mono">{u}</li>
+                      ))}
+                      {changeEvent.diff.added.length > 5 && (
+                        <li className="text-muted-foreground">+{changeEvent.diff.added.length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+                {changeEvent.diff?.removed.length ? (
+                  <div>
+                    <p className="font-medium text-destructive mb-1">
+                      −{changeEvent.diff.removed.length} removed
+                    </p>
+                    <ul className="space-y-0.5 text-muted-foreground">
+                      {changeEvent.diff.removed.slice(0, 5).map((u) => (
+                        <li key={u} className="truncate font-mono">{u}</li>
+                      ))}
+                      {changeEvent.diff.removed.length > 5 && (
+                        <li className="text-muted-foreground">+{changeEvent.diff.removed.length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+                {changeEvent.diff?.changed.length ? (
+                  <div>
+                    <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
+                      ~{changeEvent.diff.changed.length} changed
+                    </p>
+                    <ul className="space-y-0.5 text-muted-foreground">
+                      {changeEvent.diff.changed.slice(0, 5).map((u) => (
+                        <li key={u} className="truncate font-mono">{u}</li>
+                      ))}
+                      {changeEvent.diff.changed.length > 5 && (
+                        <li className="text-muted-foreground">+{changeEvent.diff.changed.length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Eval loop */}
+        {crawl?.status === "completed" && (
+          <div className="rounded-xl border border-border p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Eval loop</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Measures how much the generated file improves factual Q&A accuracy.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleRunEval}
+                disabled={evalRunning}
+                className="gap-1.5 shrink-0"
+              >
+                {evalRunning ? <Spinner className="size-3.5" /> : <FlaskConicalIcon className="size-3.5" />}
+                {evalRunning ? "Running…" : "Run eval"}
+              </Button>
+            </div>
+
+            {evalError && (
+              <p className="text-xs text-destructive">{evalError}</p>
+            )}
+
+            {evalReport && (
+              <div className="space-y-4">
+                {/* Score summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { label: "Cold (no context)", value: `${evalReport.coldScore}%` },
+                    { label: "With llms.txt", value: `${evalReport.withContextScore}%` },
+                    { label: "Lift", value: `+${evalReport.lift}%`, highlight: evalReport.lift > 0 },
+                  ].map(({ label, value, highlight }) => (
+                    <div key={label} className="space-y-0.5">
+                      <p className={`text-lg font-semibold tabular-nums ${highlight ? "text-green-700 dark:text-green-400" : ""}`}>
+                        {value}
+                      </p>
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <Separator />
+
+                {/* Q&A breakdown */}
+                <div className="space-y-3">
+                  {evalReport.pairs.map((pair, i) => (
+                    <div key={i} className="space-y-1">
+                      <p className="text-xs font-medium">{pair.question}</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className={`rounded-lg border px-3 py-2 text-xs ${pair.coldCorrect ? "border-green-500/30 bg-green-500/5" : "border-destructive/30 bg-destructive/5"}`}>
+                          <p className={`text-[10px] font-medium mb-1 ${pair.coldCorrect ? "text-green-700 dark:text-green-400" : "text-destructive"}`}>
+                            Cold {pair.coldCorrect ? "✓" : "✗"}
+                          </p>
+                          <p className="text-muted-foreground leading-relaxed">{pair.coldAnswer}</p>
+                        </div>
+                        <div className={`rounded-lg border px-3 py-2 text-xs ${pair.withContextCorrect ? "border-green-500/30 bg-green-500/5" : "border-destructive/30 bg-destructive/5"}`}>
+                          <p className={`text-[10px] font-medium mb-1 ${pair.withContextCorrect ? "text-green-700 dark:text-green-400" : "text-destructive"}`}>
+                            With llms.txt {pair.withContextCorrect ? "✓" : "✗"}
+                          </p>
+                          <p className="text-muted-foreground leading-relaxed">{pair.withContextAnswer}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Crawl history */}
+        {siteData && siteData.recentCrawls.length > 1 && (
+          <div className="rounded-xl border border-border p-5 space-y-3">
+            <p className="text-sm font-medium">Crawl history</p>
+            <div className="space-y-1">
+              {siteData.recentCrawls.map((c, i) => {
+                const runNumber = siteData.recentCrawls.length - i;
+                const isCurrent = c.id === crawlId;
+                const providers = (c as Crawl).providers ?? [];
+                return (
+                  <a
+                    key={c.id}
+                    href={`/crawls/${c.id}`}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs transition-colors hover:bg-muted/60 ${isCurrent ? "bg-muted/40" : "text-muted-foreground"}`}
+                  >
+                    {/* Run number */}
+                    <span className={`w-14 shrink-0 tabular-nums ${isCurrent ? "font-semibold text-foreground" : ""}`}>
+                      Run #{runNumber}
+                    </span>
+
+                    {/* Provider logos */}
+                    <div className="flex items-center gap-0.5 w-20 shrink-0">
+                      {providers.map((p) => (
+                        <img
+                          key={p}
+                          src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
+                          alt={PROVIDER_META[p]?.label ?? p}
+                          className="w-4 h-4 object-contain"
+                          style={{ imageRendering: "pixelated" }}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Date */}
+                    <span className="flex-1 truncate">
+                      {isCurrent
+                        ? "This crawl"
+                        : new Date(c.createdAt || "").toLocaleDateString(undefined, {
+                            month: "short", day: "numeric",
+                            hour: "2-digit", minute: "2-digit",
+                          })}
+                    </span>
+
+                    {/* Status */}
+                    <Badge
+                      variant={STATUS_VARIANT[c.status] ?? "secondary"}
+                      className={`shrink-0 text-[10px] ${c.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : ""}`}
+                    >
+                      {c.status}
+                    </Badge>
+                  </a>
+                );
+              })}
+            </div>
           </div>
         )}
 

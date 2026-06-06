@@ -241,6 +241,50 @@ export const crawlSite = inngest.createFunction(
       return { generationIds: inserted.map((g) => g.id), score: bestScore, version };
     });
 
+    // ── Step 6: compute diff vs. previous crawl + write change_event ─────────
+    await step.run("compute-diff", async () => {
+      const { diffCrawls, isMeaningfulChange } = await import("@/lib/monitor/diff");
+
+      // Find the most recent completed crawl for this site that isn't the current one
+      const [prevCrawl] = await db
+        .select({ id: schema.crawls.id })
+        .from(schema.crawls)
+        .where(
+          and(
+            eq(schema.crawls.siteId, siteId),
+            eq(schema.crawls.status, "completed"),
+            sql`${schema.crawls.id} != ${crawlId}`,
+          ),
+        )
+        .orderBy(sql`${schema.crawls.finishedAt} desc nulls last`)
+        .limit(1);
+
+      if (!prevCrawl) return; // first crawl — no diff to compute
+
+      const [prevPages, nextPages] = await Promise.all([
+        db.select({ url: schema.pages.url, contentHash: schema.pages.contentHash })
+          .from(schema.pages)
+          .where(eq(schema.pages.crawlId, prevCrawl.id)),
+        db.select({ url: schema.pages.url, contentHash: schema.pages.contentHash })
+          .from(schema.pages)
+          .where(eq(schema.pages.crawlId, crawlId)),
+      ]);
+
+      const diff = diffCrawls(prevPages, nextPages);
+      const meaningful = isMeaningfulChange(diff);
+
+      await db
+        .insert(schema.changeEvents)
+        .values({
+          siteId,
+          fromCrawlId: prevCrawl.id,
+          toCrawlId: crawlId,
+          diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
+          regenerated: meaningful,
+        })
+        .onConflictDoNothing();
+    });
+
     await step.sendEvent("crawl-completed", {
       name: crawlCompleted.name,
       data: {

@@ -28,7 +28,7 @@ const PROVIDER_META: Record<Provider, { logo: string; label: string; model: stri
   anthropic: { logo: "/providers/claude.png",   label: "Claude",   model: "claude-haiku-4-5-20251001" },
   openai:    { logo: "/providers/openai.png",    label: "GPT",      model: "gpt-4o-mini" },
   gemini:    { logo: "/providers/gemini.png",    label: "Gemini",   model: "gemini-2.0-flash" },
-  fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM",  model: "meta / first sentence" },
+  fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM",  model: "deterministic flow" },
 };
 
 export default function Home() {

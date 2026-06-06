@@ -29,10 +29,7 @@ const PROVIDER_MODEL: Record<string, string> = {
   fallback:  "Non-LLM",
 };
 
-const STATUS_VARIANT: Record<
-  string,
-  "default" | "secondary" | "outline" | "destructive"
-> = {
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   pending:    "secondary",
   crawling:   "secondary",
   generating: "secondary",
@@ -40,14 +37,19 @@ const STATUS_VARIANT: Record<
   failed:     "destructive",
 };
 
-interface CrawlEntry {
+interface CrawlRun {
   crawlId: string;
-  siteId: string;
-  slug: string;
-  hostname: string;
-  providers: string[];
   status: string;
+  providers: string[];
   submittedAt: string;
+}
+
+interface SiteGroup {
+  siteId: string;
+  hostname: string;
+  slug: string;
+  latest: CrawlRun;
+  previousRuns: CrawlRun[];
 }
 
 interface Generation {
@@ -58,7 +60,7 @@ interface Generation {
   version: number;
 }
 
-async function fetchResults(): Promise<CrawlEntry[]> {
+async function fetchGroups(): Promise<SiteGroup[]> {
   try {
     const res = await fetch("/api/crawls");
     if (!res.ok) return [];
@@ -68,12 +70,12 @@ async function fetchResults(): Promise<CrawlEntry[]> {
   }
 }
 
-async function fetchGenerations(siteId: string): Promise<Generation[]> {
+async function fetchGenerationsForCrawl(crawlId: string): Promise<Generation[]> {
   try {
-    const res = await fetch(`/api/sites/${siteId}`);
+    const res = await fetch(`/api/crawls/${crawlId}`);
     if (!res.ok) return [];
     const data = await res.json();
-    return data.latestGenerations ?? [];
+    return data.generations ?? [];
   } catch {
     return [];
   }
@@ -89,29 +91,24 @@ function triggerDownload(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadSingle(siteId: string, provider: string, hostname: string) {
-  const gens = await fetchGenerations(siteId);
+async function downloadSingle(crawlId: string, provider: string, hostname: string) {
+  const gens = await fetchGenerationsForCrawl(crawlId);
   const gen = gens.find((g) => g.provider === provider);
   if (!gen) return;
-  const label = PROVIDER_MODEL[provider] ?? provider;
-  triggerDownload(`llms-${hostname}-${label}.txt`, gen.content);
+  triggerDownload(`llms-${hostname}-${PROVIDER_MODEL[provider] ?? provider}.txt`, gen.content);
 }
 
-async function downloadAll(siteId: string, hostname: string) {
-  const gens = await fetchGenerations(siteId);
+async function downloadAll(crawlId: string, hostname: string) {
+  const gens = await fetchGenerationsForCrawl(crawlId);
   if (gens.length === 0) return;
-
   if (gens.length === 1) {
-    const label = PROVIDER_MODEL[gens[0].provider] ?? gens[0].provider;
-    triggerDownload(`llms-${hostname}-${label}.txt`, gens[0].content);
+    triggerDownload(`llms-${hostname}-${PROVIDER_MODEL[gens[0].provider] ?? gens[0].provider}.txt`, gens[0].content);
     return;
   }
-
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
   for (const gen of gens) {
-    const label = PROVIDER_MODEL[gen.provider] ?? gen.provider;
-    zip.file(`llms-${label}.txt`, gen.content);
+    zip.file(`llms-${PROVIDER_MODEL[gen.provider] ?? gen.provider}.txt`, gen.content);
   }
   const blob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(blob);
@@ -122,41 +119,34 @@ async function downloadAll(siteId: string, hostname: string) {
   URL.revokeObjectURL(url);
 }
 
-function ResultCard({ entry }: { entry: CrawlEntry }) {
-  const isRunning =
-    entry.status !== "completed" && entry.status !== "failed";
-  const isCompleted = entry.status === "completed";
+function SiteCard({ group }: { group: SiteGroup }) {
+  const { latest, hostname, previousRuns } = group;
+  const totalRuns = previousRuns.length + 1;
+  const isRunning = latest.status !== "completed" && latest.status !== "failed";
+  const isCompleted = latest.status === "completed";
   const [downloading, setDownloading] = useState(false);
 
   async function handleDownloadSingle(provider: string) {
     setDownloading(true);
-    try {
-      await downloadSingle(entry.siteId, provider, entry.hostname);
-    } finally {
-      setDownloading(false);
-    }
+    try { await downloadSingle(latest.crawlId, provider, hostname); }
+    finally { setDownloading(false); }
   }
 
   async function handleDownloadAll() {
     setDownloading(true);
-    try {
-      await downloadAll(entry.siteId, entry.hostname);
-    } finally {
-      setDownloading(false);
-    }
+    try { await downloadAll(latest.crawlId, hostname); }
+    finally { setDownloading(false); }
   }
 
   return (
     <div className="flex items-center justify-between rounded-xl border border-border px-4 py-3 hover:bg-muted/40 transition-colors">
-      {/* Left: info */}
-      <Link href={`/crawls/${entry.crawlId}`} className="flex items-center gap-3 flex-1 min-w-0">
-        {isRunning && (
-          <Spinner className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
+      {/* Left: hostname + provider logos + run count */}
+      <Link href={`/crawls/${latest.crawlId}`} className="flex items-center gap-3 flex-1 min-w-0">
+        {isRunning && <Spinner className="size-3.5 shrink-0 text-muted-foreground" />}
         <div className="min-w-0">
-          <p className="text-sm font-medium truncate">{entry.hostname}</p>
-          <div className="flex items-center gap-1 mt-0.5">
-            {entry.providers.map((p) => (
+          <p className="text-sm font-medium truncate">{hostname}</p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {latest.providers.map((p) => (
               <img
                 key={p}
                 src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
@@ -165,17 +155,20 @@ function ResultCard({ entry }: { entry: CrawlEntry }) {
                 style={{ imageRendering: "pixelated" }}
               />
             ))}
+            {totalRuns > 1 && (
+              <span className="text-[10px] text-muted-foreground ml-0.5">{totalRuns} runs</span>
+            )}
           </div>
         </div>
       </Link>
 
-      {/* Right: badge + actions */}
+      {/* Right: status badge + download + arrow */}
       <div className="flex items-center gap-2 shrink-0 ml-3">
         <Badge
-          variant={STATUS_VARIANT[entry.status] ?? "secondary"}
-          className={entry.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
+          variant={STATUS_VARIANT[latest.status] ?? "secondary"}
+          className={latest.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
         >
-          {entry.status}
+          {latest.status}
         </Badge>
 
         {isCompleted && (
@@ -184,22 +177,14 @@ function ResultCard({ entry }: { entry: CrawlEntry }) {
               disabled={downloading}
               className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-50"
             >
-              {downloading ? (
-                <Spinner className="size-3.5" />
-              ) : (
-                <MoreHorizontalIcon className="size-4" />
-              )}
+              {downloading ? <Spinner className="size-3.5" /> : <MoreHorizontalIcon className="size-4" />}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-64">
+            <DropdownMenuContent align="end" className="min-w-72">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Download</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {entry.providers.map((p) => (
-                  <DropdownMenuItem
-                    key={p}
-                    onClick={() => handleDownloadSingle(p)}
-                    className="gap-2"
-                  >
+                {latest.providers.map((p) => (
+                  <DropdownMenuItem key={p} onClick={() => handleDownloadSingle(p)} className="gap-2">
                     <DownloadIcon className="size-3.5" />
                     <img
                       src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
@@ -211,7 +196,7 @@ function ResultCard({ entry }: { entry: CrawlEntry }) {
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>
-              {entry.providers.length > 1 && (
+              {latest.providers.length > 1 && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleDownloadAll} className="gap-2">
@@ -224,7 +209,7 @@ function ResultCard({ entry }: { entry: CrawlEntry }) {
           </DropdownMenu>
         )}
 
-        <Link href={`/crawls/${entry.crawlId}`}>
+        <Link href={`/crawls/${latest.crawlId}`}>
           <ArrowRightIcon className="size-3.5 text-muted-foreground" />
         </Link>
       </div>
@@ -233,40 +218,39 @@ function ResultCard({ entry }: { entry: CrawlEntry }) {
 }
 
 export default function ResultsPage() {
-  const [results, setResults] = useState<CrawlEntry[]>([]);
+  const [groups, setGroups] = useState<SiteGroup[]>([]);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    fetchResults().then(setResults);
+    fetchGroups().then(setGroups);
   }, []);
 
   useEffect(() => {
     if (!mounted) return;
-    const active = results.filter(
-      (r) => r.status !== "completed" && r.status !== "failed",
+    const hasActive = groups.some(
+      (g) => g.latest.status !== "completed" && g.latest.status !== "failed",
     );
-    if (active.length === 0) return;
+    if (!hasActive) return;
 
     const timer = setTimeout(() => {
-      fetchResults().then(setResults);
+      fetchGroups().then(setGroups);
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [results, mounted]);
+  }, [groups, mounted]);
 
   return (
     <div className="flex flex-1 flex-col px-6 py-10">
       <div className="w-full max-w-2xl mx-auto space-y-6">
-
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Results</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            All generations, newest first.
+            All generations, newest first. Click a card to see run history and generated files.
           </p>
         </div>
 
-        {!mounted ? null : results.length === 0 ? (
+        {!mounted ? null : groups.length === 0 ? (
           <div className="rounded-xl border border-border px-6 py-12 text-center">
             <p className="text-sm text-muted-foreground">
               No generations yet.{" "}
@@ -277,12 +261,11 @@ export default function ResultsPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {results.map((entry) => (
-              <ResultCard key={entry.crawlId} entry={entry} />
+            {groups.map((group) => (
+              <SiteCard key={group.siteId} group={group} />
             ))}
           </div>
         )}
-
       </div>
     </div>
   );
