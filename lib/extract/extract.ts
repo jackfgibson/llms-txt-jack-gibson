@@ -26,7 +26,6 @@ export function extractPage(html: string, url: string): ExtractedPage {
   const lang = $("html").attr("lang")?.trim() || null;
   const h1 = $("h1").first().text().trim() || null;
 
-  // OG tags
   const og: Record<string, string> = {};
   $('meta[property^="og:"]').each((_, el) => {
     const prop = $(el).attr("property");
@@ -34,7 +33,6 @@ export function extractPage(html: string, url: string): ExtractedPage {
     if (prop && content) og[prop.replace("og:", "")] = content;
   });
 
-  // Readability for main content
   let mainText: string | null = null;
   try {
     const dom = new JSDOM(html, { url });
@@ -45,7 +43,6 @@ export function extractPage(html: string, url: string): ExtractedPage {
     // Readability can throw on malformed HTML — fall back to null.
   }
 
-  // JS shell detection: fewer than 100 characters of body text after stripping tags
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const isJsShell = bodyText.length < 100;
 

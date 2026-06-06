@@ -28,9 +28,8 @@ export async function crawl(
   const effectiveDelay = Math.max(cfg.politeDelayMs, robots.crawlDelayMs);
   const limit = pLimit(cfg.concurrency);
 
-  // ── Seed from sitemap ────────────────────────────────────────────────────
+  // Seed from sitemap
   const sitemapCandidates = [...robots.sitemapUrls];
-  // Always try the canonical sitemap location even if robots.txt didn't list it.
   if (!sitemapCandidates.length) {
     sitemapCandidates.push(`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`);
   }
@@ -47,52 +46,44 @@ export async function crawl(
   sitemapUrls = [...new Set(sitemapUrls)];
   const sitemapUsed = sitemapUrls.length > 0;
 
-  // ── BFS queue ────────────────────────────────────────────────────────────
-  // Items: [url, depth]
+  // BFS queue: [url, depth]
   const queue: Array<[string, number]> = [];
   const enqueued = new Set<string>();
 
   const enqueue = (url: string, depth: number) => {
     const normalised = canonicalise(url);
     if (!normalised) return;
-    if (!normalised.startsWith(origin)) return;  // same-origin only
+    if (!normalised.startsWith(origin)) return;
     if (enqueued.has(normalised)) return;
     enqueued.add(normalised);
     queue.push([normalised, depth]);
   };
 
   enqueue(originUrl, 0);
-  // Sitemap URLs count as depth 1 — they're pre-discovered but not followed from seed.
   for (const u of sitemapUrls) enqueue(u, 1);
 
-  // ── Results ──────────────────────────────────────────────────────────────
   const pages: CrawledPage[] = [];
   const errors: Array<{ url: string; reason: string }> = [];
   let pagesSkipped = 0;
   let lastRequestTime = 0;
 
-  // ── Crawl loop ───────────────────────────────────────────────────────────
   while (queue.length > 0 && pages.length < cfg.hardCeiling) {
     if (pages.length >= cfg.maxPages) break;
 
-    // Drain up to concurrency items from the front of the queue.
     const batch = queue.splice(0, cfg.concurrency);
 
     const tasks = batch.map(([url, depth]) =>
       limit(async (): Promise<void> => {
-        // Robots check
         if (!robots.isAllowed(url)) {
           pagesSkipped++;
           return;
         }
 
-        // Polite delay — serialised per host via a shared timestamp
         const now = Date.now();
         const wait = effectiveDelay - (now - lastRequestTime);
         if (wait > 0) await sleep(wait);
         lastRequestTime = Date.now();
 
-        // Fetch
         let res: Response;
         try {
           res = await safeFetch(url, {
@@ -119,7 +110,6 @@ export async function crawl(
 
         pages.push({ url, depth, statusCode: res.status, html, finalUrl });
 
-        // BFS: extract links and enqueue if within depth limit
         if (depth < cfg.maxDepth) {
           const links = extractLinks(html, finalUrl, origin);
           for (const link of links) enqueue(link, depth + 1);
@@ -130,7 +120,7 @@ export async function crawl(
     await Promise.all(tasks);
   }
 
-  pagesSkipped += queue.length; // remaining unvisited items
+  pagesSkipped += queue.length;
 
   return {
     pages,
@@ -142,12 +132,9 @@ export async function crawl(
   };
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 function canonicalise(href: string): string | null {
   try {
     const u = new URL(href);
-    // Drop fragment; normalise trailing slash on root only.
     u.hash = "";
     return u.toString();
   } catch {
