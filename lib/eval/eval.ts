@@ -131,31 +131,41 @@ Output format (JSON only): {"correct": true/false, "explanation": "one sentence"
  * 2. For each pair, ask cold and ask with llms.txt context
  * 3. Grade both answers
  * 4. Return the report
+ *
+ * Concurrency is capped at 2 questions at a time (each question makes up to 4 Claude
+ * calls) to stay within Anthropic's concurrent-connection rate limit.
  */
 export async function runEval(pages: EvalPage[], llmsTxt: string): Promise<EvalReport> {
   const pairs = await generateQAPairs(pages);
 
+  const pLimit = (await import("p-limit")).default;
+  const limit = pLimit(2);
+
   const results: EvalResult[] = await Promise.all(
-    pairs.map(async (pair) => {
-      const [coldAnswer, withContextAnswer] = await Promise.all([
-        askCold(pair.question),
-        askWithContext(pair.question, llmsTxt),
-      ]);
+    pairs.map((pair) =>
+      limit(async () => {
+        // cold + context in parallel (2 connections)
+        const [coldAnswer, withContextAnswer] = await Promise.all([
+          askCold(pair.question),
+          askWithContext(pair.question, llmsTxt),
+        ]);
 
-      const [coldCorrect, withContextCorrect] = await Promise.all([
-        gradeAnswer(pair.question, pair.answer, coldAnswer),
-        gradeAnswer(pair.question, pair.answer, withContextAnswer),
-      ]);
+        // grade in parallel (2 connections, after the answers are ready)
+        const [coldCorrect, withContextCorrect] = await Promise.all([
+          gradeAnswer(pair.question, pair.answer, coldAnswer),
+          gradeAnswer(pair.question, pair.answer, withContextAnswer),
+        ]);
 
-      return {
-        question: pair.question,
-        groundTruth: pair.answer,
-        coldAnswer,
-        coldCorrect,
-        withContextAnswer,
-        withContextCorrect,
-      };
-    }),
+        return {
+          question: pair.question,
+          groundTruth: pair.answer,
+          coldAnswer,
+          coldCorrect,
+          withContextAnswer,
+          withContextCorrect,
+        };
+      }),
+    ),
   );
 
   const total = results.length;
