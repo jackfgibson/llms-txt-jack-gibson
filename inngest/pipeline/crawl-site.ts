@@ -1,10 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { inngest } from "../client";
 import { crawlRequested, crawlCompleted } from "../events";
-import { crawl } from "@/lib/crawler/crawl";
-import { extractPage } from "@/lib/extract/extract";
-import { curate } from "@/lib/curate/curate";
-import { generateFallback } from "@/lib/llmstxt/generate";
 import { db, schema } from "@/lib/db";
 
 export const crawlSite = inngest.createFunction(
@@ -36,8 +32,10 @@ export const crawlSite = inngest.createFunction(
     });
 
     // ── Step 2: crawl + extract + persist pages ──────────────────────────────
-    // Returns lightweight stats (not the full HTML) to keep step memo small.
     const crawlStats = await step.run("crawl-extract-persist", async () => {
+      const { crawl } = await import("@/lib/crawler/crawl");
+      const { extractPage } = await import("@/lib/extract/extract");
+
       const result = await crawl(url, { maxPages: 50, concurrency: 6 });
 
       const extractedPages = result.pages.map((p) => ({
@@ -45,7 +43,6 @@ export const crawlSite = inngest.createFunction(
         depth: p.depth,
       }));
 
-      // Idempotent upsert: unique index on (crawl_id, url) skips duplicates.
       if (extractedPages.length > 0) {
         await db
           .insert(schema.pages)
@@ -91,6 +88,8 @@ export const crawlSite = inngest.createFunction(
 
     // ── Step 3: curate ───────────────────────────────────────────────────────
     const curateResult = await step.run("curate", async () => {
+      const { curate } = await import("@/lib/curate/curate");
+
       const dbPages = await db
         .select()
         .from(schema.pages)
@@ -112,7 +111,6 @@ export const crawlSite = inngest.createFunction(
 
       const result = curate(input, { maxPages: 40 });
 
-      // Persist scores + page type back to DB (idempotent updates).
       for (const scored of result.scored) {
         await db
           .update(schema.pages)
@@ -125,7 +123,6 @@ export const crawlSite = inngest.createFunction(
           );
       }
 
-      // Return just the shape needed for generate — no full mainText to keep memo small.
       return {
         sections: result.sections.map((s) => ({
           heading: s.heading,
@@ -146,53 +143,47 @@ export const crawlSite = inngest.createFunction(
 
     // ── Step 4: generate llms.txt ────────────────────────────────────────────
     const generationResult = await step.run("generate", async () => {
-      // Derive site title: title of the home page, or the hostname.
+      const { generateFallback } = await import("@/lib/llmstxt/generate");
+
       const homePage = curateResult.sections
         .flatMap((s) => s.pages)
         .find((p) => p.pageType === "home");
 
       const siteTitle =
         homePage?.title ?? new URL(url).hostname.replace(/^www\./, "");
-
       const siteDescription =
         homePage?.metaDescription ?? homePage?.description ?? null;
 
-      // Check description cache for pages with a content hash.
       const sections = await Promise.all(
         curateResult.sections.map(async (section) => ({
           heading: section.heading,
           pages: await Promise.all(
             section.pages.map(async (page) => {
               let description = page.description;
-
               if (!description && page.contentHash) {
                 const cached = await db
                   .select()
                   .from(schema.pageDescriptions)
-                  .where(
-                    eq(schema.pageDescriptions.contentHash, page.contentHash),
-                  )
+                  .where(eq(schema.pageDescriptions.contentHash, page.contentHash))
                   .limit(1);
                 if (cached[0]) description = cached[0].description;
               }
-
               return { ...page, description };
             }),
           ),
         })),
       );
 
-      const result = generateFallback(siteTitle, siteDescription, sections as Parameters<typeof generateFallback>[2]);
-      return {
-        content: result.content,
-        validation: result.validation,
-        mode: result.mode,
-      };
+      const result = generateFallback(
+        siteTitle,
+        siteDescription,
+        sections as Parameters<typeof generateFallback>[2],
+      );
+      return { content: result.content, validation: result.validation, mode: result.mode };
     });
 
     // ── Step 5: persist generation + mark completed ──────────────────────────
     const generation = await step.run("persist-generation", async () => {
-      // Get next version number for this site (idempotent: use max+1).
       const [{ maxVersion }] = await db
         .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
         .from(schema.generations)
@@ -213,11 +204,7 @@ export const crawlSite = inngest.createFunction(
 
       await db
         .update(schema.crawls)
-        .set({
-          status: "completed",
-          finishedAt: new Date(),
-          progress: { phase: "completed" },
-        })
+        .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
         .where(eq(schema.crawls.id, crawlId));
 
       return { generationId: inserted?.id, score: generationResult.validation.score };
@@ -233,10 +220,6 @@ export const crawlSite = inngest.createFunction(
       },
     });
 
-    return {
-      crawlStats,
-      score: generation.score,
-      generationId: generation.generationId,
-    };
+    return { crawlStats, score: generation.score, generationId: generation.generationId };
   },
 );
