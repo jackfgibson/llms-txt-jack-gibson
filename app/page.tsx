@@ -28,7 +28,7 @@ const PROVIDER_META: Record<Provider, { logo: string; label: string; model: stri
   anthropic: { logo: "/providers/claude.png",   label: "Claude",   model: "claude-haiku-4-5-20251001" },
   openai:    { logo: "/providers/openai.png",    label: "GPT",      model: "gpt-4o-mini" },
   gemini:    { logo: "/providers/gemini.png",    label: "Gemini",   model: "gemini-2.0-flash" },
-  fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM",  model: "meta / first sentence" },
+  fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM",  model: "deterministic flow" },
 };
 
 export default function Home() {
@@ -195,7 +195,6 @@ export default function Home() {
                   type="number"
                   min={5}
                   max={50}
-                  step={5}
                   value={maxPages}
                   onChange={(e) =>
                     setMaxPages(
@@ -203,7 +202,7 @@ export default function Home() {
                     )
                   }
                   disabled={loading}
-                  className="w-20 h-8 text-sm text-center"
+                  className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -218,7 +217,6 @@ export default function Home() {
                   type="number"
                   min={1}
                   max={3}
-                  step={1}
                   value={maxDepth}
                   onChange={(e) =>
                     setMaxDepth(
@@ -226,7 +224,7 @@ export default function Home() {
                     )
                   }
                   disabled={loading}
-                  className="w-20 h-8 text-sm text-center"
+                  className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>
