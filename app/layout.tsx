@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CrawlAtlas",
+  title: "Crawl Atlas",
   description: "An LLMs.txt Generator for the AI Era",
 };
 
