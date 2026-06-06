@@ -1,31 +1,18 @@
 import { describe, it, expect } from "vitest";
+import * as cheerio from "cheerio";
 import { fetchRobots } from "@/lib/crawler/robots";
 
-// Isolated unit tests for the robots parser — no live network calls.
-// The fetchRobots function is tested below via module-level mocking of safeFetch.
-// Full integration tests (sitemap + BFS) require a live HTTP server and are out of scope here.
-
-describe("fetchRobots — disallow parsing", () => {
-  // We test the robots parser logic directly by importing robotsParser
-  // The integration is covered by the fact that isAllowed is wired to the parsed result.
-  it("module imports without error", async () => {
-    // If this resolves, the robots-parser dep and our wrapper are wired correctly.
-    // A live call to a real origin would be needed for a true integration test.
-    await expect(
-      Promise.resolve(typeof fetchRobots),
-    ).resolves.toBe("function");
+describe("fetchRobots — module wiring", () => {
+  it("exports a function", () => {
+    expect(typeof fetchRobots).toBe("function");
   });
 });
 
-describe("crawl link extraction (unit)", () => {
-  it("resolves relative links against the base URL", () => {
-    // Test the cheerio link-extraction logic in isolation by importing the helper.
-    // Since extractLinks is not exported, we verify it indirectly through a crawl
-    // on a local mock — but for now verify cheerio is importable and functional.
-    const cheerio = require("cheerio");
+describe("link extraction — cheerio", () => {
+  it("resolves relative links against a base URL", () => {
     const $ = cheerio.load(`<a href="/about">About</a><a href="https://other.com/x">Ext</a>`);
     const links: string[] = [];
-    $("a[href]").each((_: number, el: unknown) => {
+    $("a[href]").each((_, el) => {
       const href = $(el).attr("href");
       if (!href) return;
       try {
@@ -36,5 +23,22 @@ describe("crawl link extraction (unit)", () => {
     });
     expect(links).toContain("https://example.com/about");
     expect(links).toContain("https://other.com/x");
+  });
+
+  it("ignores anchors with no href", () => {
+    const $ = cheerio.load(`<a>No href</a><a href="/ok">OK</a>`);
+    const links: string[] = [];
+    $("a[href]").each((_, el) => {
+      const href = $(el).attr("href");
+      if (href) links.push(href);
+    });
+    expect(links).toEqual(["/ok"]);
+  });
+
+  it("strips fragments when resolving", () => {
+    const href = "/page#section";
+    const u = new URL(href, "https://example.com");
+    u.hash = "";
+    expect(u.toString()).toBe("https://example.com/page");
   });
 });

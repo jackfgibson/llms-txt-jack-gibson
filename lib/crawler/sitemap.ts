@@ -1,10 +1,8 @@
 import { XMLParser } from "fast-xml-parser";
-import { safeFetch } from "@/lib/url/ssrf";
-import { SsrfError } from "@/lib/url/ssrf";
+import { safeFetch, SsrfError } from "@/lib/url/ssrf";
 
 const parser = new XMLParser({ ignoreAttributes: false });
 
-/** Returns all <loc> URLs from a sitemap or sitemap index, recursing into sub-sitemaps. */
 export async function fetchSitemapUrls(
   sitemapUrl: string,
   origin: string,
@@ -34,10 +32,7 @@ export async function fetchSitemapUrls(
 
   const urls: string[] = [];
 
-  // Sitemap index: recurse into each <sitemap><loc>
-  const index = (parsed as Record<string, unknown>)["sitemapindex"] as
-    | Record<string, unknown>
-    | undefined;
+  const index = parsed["sitemapindex"] as Record<string, unknown> | undefined;
   if (index) {
     const sitemaps = normaliseList(index["sitemap"]);
     for (const s of sitemaps) {
@@ -49,10 +44,7 @@ export async function fetchSitemapUrls(
     return urls;
   }
 
-  // Regular sitemap: collect <url><loc>
-  const urlset = (parsed as Record<string, unknown>)["urlset"] as
-    | Record<string, unknown>
-    | undefined;
+  const urlset = parsed["urlset"] as Record<string, unknown> | undefined;
   if (urlset) {
     const items = normaliseList(urlset["url"]);
     for (const item of items) {
