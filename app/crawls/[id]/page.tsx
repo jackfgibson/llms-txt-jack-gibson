@@ -221,7 +221,10 @@ export default function CrawlPage({
     return () => clearTimeout(timer);
   }, [crawlId]);
 
-  const generations = siteData?.latestGenerations ?? [];
+  const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
+  const generations = (siteData?.latestGenerations ?? []).slice().sort(
+    (a, b) => PROVIDER_ORDER.indexOf(a.provider) - PROVIDER_ORDER.indexOf(b.provider),
+  );
   const site = siteData?.site;
   const isRunning =
     !crawl ||
@@ -262,7 +265,10 @@ export default function CrawlPage({
           )}
           <div className="flex items-center gap-2">
             {crawl ? (
-              <Badge variant={STATUS_VARIANT[crawl.status] ?? "secondary"}>
+              <Badge
+                variant={STATUS_VARIANT[crawl.status] ?? "secondary"}
+                className={crawl.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
+              >
                 {crawl.status}
               </Badge>
             ) : (
@@ -340,7 +346,7 @@ export default function CrawlPage({
                     <img
                       src={meta.logo}
                       alt={meta.label}
-                      className="w-4 h-4 object-contain"
+                      className="w-6 h-6 object-contain"
                       style={{ imageRendering: "pixelated" }}
                     />
                     {meta.label}

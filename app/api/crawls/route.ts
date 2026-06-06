@@ -11,7 +11,9 @@ export async function GET() {
       status: schema.crawls.status,
       providers: schema.crawls.providers,
       submittedAt: schema.crawls.createdAt,
+      siteId: schema.sites.id,
       siteUrl: schema.sites.url,
+      slug: schema.sites.slug,
     })
     .from(schema.crawls)
     .innerJoin(schema.sites, eq(schema.crawls.siteId, schema.sites.id))
@@ -21,6 +23,8 @@ export async function GET() {
   return NextResponse.json(
     rows.map((r) => ({
       crawlId: r.crawlId,
+      siteId: r.siteId,
+      slug: r.slug,
       hostname: new URL(r.siteUrl).hostname.replace(/^www\./, ""),
       providers: r.providers ?? [],
       status: r.status,

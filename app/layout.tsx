@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import { AppSidebar } from "@/components/app-sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 
 const rubik = localFont({
   src: [
@@ -31,8 +35,21 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${rubik.variable} h-full`}>
-      <body className="min-h-full flex flex-col font-[family-name:var(--font-rubik)]">
-        {children}
+      <body className="min-h-full font-[family-name:var(--font-rubik)]">
+        <TooltipProvider>
+          <SidebarProvider>
+            <AppSidebar />
+            <SidebarInset>
+              <header className="flex h-12 items-center gap-2 px-4 border-b border-border md:hidden">
+                <SidebarTrigger />
+              </header>
+              <main className="flex flex-1 flex-col">
+                {children}
+              </main>
+            </SidebarInset>
+          </SidebarProvider>
+        </TooltipProvider>
+        <Toaster position="bottom-right" />
       </body>
     </html>
   );
