@@ -8,10 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
 
-const FEATURES = [
-  "Respects robots.txt",
-  "Spec-validated output",
-  "Dynamic crawl configuration",
+const FEATURES: Array<{ label: string; href?: string }> = [
+  { label: "Respects robots.txt" },
+  { label: "Spec-validated output", href: "https://llmstxt.org/#format" },
+  { label: "Dynamic crawl configuration" },
 ];
 
 export default function Home() {
@@ -110,8 +110,19 @@ export default function Home() {
         {/* Feature list */}
         <div className="flex items-center justify-center gap-3 flex-wrap">
           {FEATURES.map((f, i) => (
-            <span key={f} className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground">{f}</span>
+            <span key={f.label} className="flex items-center gap-3">
+              {f.href ? (
+                <a
+                  href={f.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                >
+                  {f.label}
+                </a>
+              ) : (
+                <span className="text-xs text-muted-foreground">{f.label}</span>
+              )}
               {i < FEATURES.length - 1 && (
                 <Separator orientation="vertical" className="h-3" />
               )}

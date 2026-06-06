@@ -2,11 +2,21 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
-const pixelifySans = localFont({
-  src: "../public/fonts/PixelifySans.ttf",
-  variable: "--font-pixelify",
+const rubik = localFont({
+  src: [
+    {
+      path: "../public/fonts/Rubik-VariableFont_wght.ttf",
+      style: "normal",
+      weight: "300 900",
+    },
+    {
+      path: "../public/fonts/Rubik-Italic-VariableFont_wght.ttf",
+      style: "italic",
+      weight: "300 900",
+    },
+  ],
+  variable: "--font-rubik",
   display: "swap",
-  weight: "100 900",
 });
 
 export const metadata: Metadata = {
@@ -20,8 +30,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${pixelifySans.variable} h-full`}>
-      <body className="min-h-full flex flex-col font-[family-name:var(--font-pixelify)]">
+    <html lang="en" className={`${rubik.variable} h-full`}>
+      <body className="min-h-full flex flex-col font-[family-name:var(--font-rubik)]">
         {children}
       </body>
     </html>
