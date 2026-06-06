@@ -1,6 +1,19 @@
 import { XMLParser } from "fast-xml-parser";
 import { safeFetch, SsrfError } from "@/lib/url/ssrf";
 
+function sameEffectiveOrigin(url: string, origin: string): boolean {
+  try {
+    const u = new URL(url);
+    const o = new URL(origin);
+    if (u.protocol !== o.protocol) return false;
+    const uh = u.hostname;
+    const oh = o.hostname;
+    return uh === oh || uh === `www.${oh}` || `www.${uh}` === oh;
+  } catch {
+    return false;
+  }
+}
+
 const parser = new XMLParser({ ignoreAttributes: false });
 
 export async function fetchSitemapUrls(
@@ -37,7 +50,7 @@ export async function fetchSitemapUrls(
     const sitemaps = normaliseList(index["sitemap"]);
     for (const s of sitemaps) {
       const loc = (s as Record<string, unknown>)["loc"];
-      if (typeof loc === "string" && loc.startsWith(origin)) {
+      if (typeof loc === "string" && sameEffectiveOrigin(loc, origin)) {
         urls.push(...(await fetchSitemapUrls(loc, origin, visited)));
       }
     }
@@ -49,7 +62,7 @@ export async function fetchSitemapUrls(
     const items = normaliseList(urlset["url"]);
     for (const item of items) {
       const loc = (item as Record<string, unknown>)["loc"];
-      if (typeof loc === "string" && loc.startsWith(origin)) {
+      if (typeof loc === "string" && sameEffectiveOrigin(loc, origin)) {
         urls.push(loc);
       }
     }

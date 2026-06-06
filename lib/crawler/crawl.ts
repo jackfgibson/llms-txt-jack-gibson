@@ -53,7 +53,7 @@ export async function crawl(
   const enqueue = (url: string, depth: number) => {
     const normalised = canonicalise(url);
     if (!normalised) return;
-    if (!normalised.startsWith(origin)) return;
+    if (!sameEffectiveOrigin(normalised, origin)) return;
     if (enqueued.has(normalised)) return;
     enqueued.add(normalised);
     queue.push([normalised, depth]);
@@ -132,6 +132,20 @@ export async function crawl(
   };
 }
 
+// Accepts www <-> non-www redirect pairs as same-origin.
+function sameEffectiveOrigin(url: string, origin: string): boolean {
+  try {
+    const u = new URL(url);
+    const o = new URL(origin);
+    if (u.protocol !== o.protocol) return false;
+    const uh = u.hostname;
+    const oh = o.hostname;
+    return uh === oh || uh === `www.${oh}` || `www.${uh}` === oh;
+  } catch {
+    return false;
+  }
+}
+
 function canonicalise(href: string): string | null {
   try {
     const u = new URL(href);
@@ -150,7 +164,7 @@ function extractLinks(html: string, baseUrl: string, origin: string): string[] {
     if (!href) return;
     try {
       const resolved = new URL(href, baseUrl).toString();
-      if (resolved.startsWith(origin)) links.push(resolved);
+      if (sameEffectiveOrigin(resolved, origin)) links.push(resolved);
     } catch {
       // ignore unparseable hrefs
     }
