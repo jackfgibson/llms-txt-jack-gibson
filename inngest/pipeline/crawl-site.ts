@@ -141,44 +141,54 @@ export const crawlSite = inngest.createFunction(
       };
     });
 
+    // ── Step 3.5: mark generating ────────────────────────────────────────────
+    await step.run("mark-generating", async () => {
+      await db
+        .update(schema.crawls)
+        .set({ status: "generating", progress: { phase: "generating" } })
+        .where(eq(schema.crawls.id, crawlId));
+    });
+
     // ── Step 4: generate llms.txt ────────────────────────────────────────────
     const generationResult = await step.run("generate", async () => {
-      const { generateFallback } = await import("@/lib/llmstxt/generate");
+      const { generateWithLlm } = await import("@/lib/llmstxt/generate-llm");
 
       const homePage = curateResult.sections
         .flatMap((s) => s.pages)
         .find((p) => p.pageType === "home");
 
-      const siteTitle =
+      const rawSiteTitle =
         homePage?.title ?? new URL(url).hostname.replace(/^www\./, "");
-      const siteDescription =
+      const rawSiteDescription =
         homePage?.metaDescription ?? homePage?.description ?? null;
 
-      const sections = await Promise.all(
-        curateResult.sections.map(async (section) => ({
-          heading: section.heading,
-          pages: await Promise.all(
-            section.pages.map(async (page) => {
-              let description = page.description;
-              if (!description && page.contentHash) {
-                const cached = await db
-                  .select()
-                  .from(schema.pageDescriptions)
-                  .where(eq(schema.pageDescriptions.contentHash, page.contentHash))
-                  .limit(1);
-                if (cached[0]) description = cached[0].description;
-              }
-              return { ...page, description };
-            }),
-          ),
-        })),
+      // DB-backed description cache adapter (content_hash → description)
+      const cache = {
+        async get(contentHash: string) {
+          const rows = await db
+            .select()
+            .from(schema.pageDescriptions)
+            .where(eq(schema.pageDescriptions.contentHash, contentHash))
+            .limit(1);
+          return rows[0]
+            ? { description: rows[0].description, provenance: rows[0].provenance ?? "" }
+            : null;
+        },
+        async set(contentHash: string, description: string, provenance: string) {
+          await db
+            .insert(schema.pageDescriptions)
+            .values({ contentHash, description, provenance })
+            .onConflictDoNothing();
+        },
+      };
+
+      const result = await generateWithLlm(
+        rawSiteTitle,
+        rawSiteDescription,
+        curateResult.sections as Parameters<typeof generateWithLlm>[2],
+        cache,
       );
 
-      const result = generateFallback(
-        siteTitle,
-        siteDescription,
-        sections as Parameters<typeof generateFallback>[2],
-      );
       return { content: result.content, validation: result.validation, mode: result.mode };
     });
 
