@@ -1,14 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-let _client: Anthropic | null = null;
-
-export function getClient(): Anthropic {
-  if (!_client) {
-    _client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return _client;
-}
-
+/**
+ * Returns true if any supported LLM key is configured.
+ * Provider priority (first key wins): Anthropic → OpenAI.
+ */
 export function hasApiKey(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+  return (
+    Boolean(process.env.ANTHROPIC_API_KEY?.trim()) ||
+    Boolean(process.env.OPENAI_API_KEY?.trim())
+  );
 }

@@ -57,7 +57,7 @@ export default function Home() {
           <img
             src="/logo.png"
             alt="Crawl Atlas logo"
-            className="w-16 h-16 object-contain"
+            className="w-28 h-28 object-contain"
             style={{ imageRendering: "pixelated" }}
           />
           <div className="space-y-1">

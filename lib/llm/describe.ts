@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getClient } from "./client";
+import { callWithTool } from "./call";
 
 const OutputSchema = z.object({
   description: z.string().min(10).max(300),
@@ -12,9 +12,9 @@ export interface PageDescriptionResult {
 }
 
 /**
- * Uses Claude tool-use to generate a grounded 1-2 sentence description and
- * a provenance excerpt for a single page. Returns null on total failure so
- * callers can fall back to meta/first-sentence derivation.
+ * Generates a grounded 1-2 sentence description and provenance excerpt for a
+ * single page. Uses whichever LLM key is configured (Anthropic → OpenAI).
+ * Returns null on failure so callers fall back to meta/first-sentence.
  */
 export async function describePage(page: {
   url: string;
@@ -25,8 +25,6 @@ export async function describePage(page: {
 }): Promise<PageDescriptionResult | null> {
   const content = buildContent(page);
   if (!content.trim()) return null;
-
-  const client = getClient();
 
   const prompt = `You are writing a description for a page entry in an llms.txt file — a machine-readable site index for AI systems.
 
@@ -40,39 +38,26 @@ Write a 1-2 sentence description of what this page contains, grounded ONLY in th
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 512,
-        tools: [
-          {
-            name: "describe_page",
-            description: "Describe a page for inclusion in an llms.txt file.",
-            input_schema: {
-              type: "object" as const,
-              properties: {
-                description: {
-                  type: "string",
-                  description:
-                    "1-2 sentence description (max 200 chars) grounded strictly in the page content.",
-                },
-                provenance: {
-                  type: "string",
-                  description:
-                    "Exact excerpt (20-100 words) from the content that backs the description.",
-                },
-              },
-              required: ["description", "provenance"],
-            },
+      const raw = await callWithTool(prompt, {
+        name: "describe_page",
+        description: "Describe a page for inclusion in an llms.txt file.",
+        properties: {
+          description: {
+            type: "string",
+            description:
+              "1-2 sentence description (max 200 chars) grounded strictly in the page content.",
           },
-        ],
-        tool_choice: { type: "tool" as const, name: "describe_page" },
-        messages: [{ role: "user", content: prompt }],
+          provenance: {
+            type: "string",
+            description:
+              "Exact excerpt (20-100 words) from the content that backs the description.",
+          },
+        },
+        required: ["description", "provenance"],
       });
 
-      const toolBlock = response.content.find((b) => b.type === "tool_use");
-      if (!toolBlock || toolBlock.type !== "tool_use") continue;
-
-      const parsed = OutputSchema.safeParse(toolBlock.input);
+      if (!raw) continue;
+      const parsed = OutputSchema.safeParse(raw);
       if (parsed.success) return parsed.data;
     } catch {
       // Retry once, then give up
