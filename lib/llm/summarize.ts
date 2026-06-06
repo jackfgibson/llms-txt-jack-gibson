@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { callWithTool } from "./call";
+import { callWithTool, type LlmProvider } from "./call";
 
 const OutputSchema = z.object({
   siteTitle: z.string().min(1).max(100),
@@ -17,7 +17,7 @@ export async function generateSiteSummary(
   rawTitle: string,
   homeContent: string,
   aboutContent: string | null,
-  provider?: "anthropic" | "openai",
+  provider?: LlmProvider,
 ): Promise<SiteSummaryResult | null> {
   const combined = [homeContent, aboutContent]
     .filter(Boolean)

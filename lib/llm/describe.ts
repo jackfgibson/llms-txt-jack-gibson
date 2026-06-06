@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { callWithTool } from "./call";
+import { callWithTool, type LlmProvider } from "./call";
 
 const OutputSchema = z.object({
   description: z.string().min(10).max(300),
@@ -19,7 +19,7 @@ export async function describePage(
     metaDescription: string | null;
     mainText: string | null;
   },
-  provider?: "anthropic" | "openai",
+  provider?: LlmProvider,
 ): Promise<PageDescriptionResult | null> {
   const content = buildContent(page);
   if (!content.trim()) return null;

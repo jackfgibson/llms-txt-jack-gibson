@@ -62,6 +62,7 @@ export const crawls = pgTable(
       .references(() => sites.id, { onDelete: "cascade" }),
     status: crawlStatus("status").notNull().default("pending"),
     mode: crawlMode("mode").notNull(),
+    providers: text("providers").array(), // requested providers, e.g. ["anthropic","openai"]
     stats: jsonb("stats").$type<CrawlStats>(),
     progress: jsonb("progress").$type<CrawlProgress>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

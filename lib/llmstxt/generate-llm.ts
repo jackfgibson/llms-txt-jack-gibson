@@ -3,6 +3,7 @@ import { describePage } from "@/lib/llm/describe";
 import { generateSiteSummary } from "@/lib/llm/summarize";
 import { generateFallback, type GenerateResult } from "./generate";
 import type { CuratedSection } from "@/lib/curate/curate";
+import type { LlmProvider } from "@/lib/llm/call";
 
 export interface DescriptionCache {
   get(contentHash: string): Promise<{ description: string; provenance: string } | null>;
@@ -12,8 +13,8 @@ export interface DescriptionCache {
 /**
  * Generates an llms.txt file with LLM-grounded descriptions.
  *
- * `provider` must be "anthropic" or "openai". If the corresponding API key is
- * missing, falls back to generateFallback automatically.
+ * `provider` must be "anthropic", "openai", or "gemini". If the corresponding
+ * API key is missing, falls back to generateFallback automatically.
  *
  * Parallel calls from the pipeline each supply their own provider so
  * descriptions are generated independently per model.
@@ -23,13 +24,15 @@ export async function generateWithLlm(
   rawSiteDescription: string | null,
   sections: CuratedSection[],
   cache: DescriptionCache,
-  provider: "anthropic" | "openai",
+  provider: LlmProvider,
 ): Promise<GenerateResult> {
   // Guard: if the key for this provider isn't set, use fallback mode
   const keyPresent =
     provider === "anthropic"
       ? Boolean(process.env.ANTHROPIC_API_KEY?.trim())
-      : Boolean(process.env.OPENAI_API_KEY?.trim());
+      : provider === "openai"
+        ? Boolean(process.env.OPENAI_API_KEY?.trim())
+        : Boolean(process.env.GOOGLE_API_KEY?.trim());
 
   if (!keyPresent) {
     return generateFallback(rawSiteTitle, rawSiteDescription, sections);

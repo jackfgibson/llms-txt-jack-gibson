@@ -8,7 +8,7 @@ import { slugFromUrl } from "@/lib/api/slug";
 
 export const runtime = "nodejs";
 
-const VALID_PROVIDERS = ["anthropic", "openai", "fallback"] as const;
+const VALID_PROVIDERS = ["anthropic", "openai", "gemini", "fallback"] as const;
 
 const bodySchema = z.object({
   url: z.string().url(),
@@ -16,6 +16,8 @@ const bodySchema = z.object({
     .array(z.enum(VALID_PROVIDERS))
     .min(1)
     .default(["anthropic", "openai", "fallback"]),
+  maxPages: z.number().int().min(5).max(50).default(25),
+  maxDepth: z.number().int().min(1).max(3).default(3),
 });
 
 export async function POST(req: NextRequest) {
@@ -57,13 +59,20 @@ export async function POST(req: NextRequest) {
   // Create a new pending crawl.
   const [crawl] = await db
     .insert(schema.crawls)
-    .values({ siteId: site.id, status: "pending", mode: "initial" })
+    .values({ siteId: site.id, status: "pending", mode: "initial", providers: parsed.data.providers })
     .returning();
 
   // Fire Inngest event (non-blocking).
   await inngest.send({
     name: crawlRequested.name,
-    data: { siteId: site.id, crawlId: crawl.id, url: origin, providers: parsed.data.providers },
+    data: {
+      siteId: site.id,
+      crawlId: crawl.id,
+      url: origin,
+      providers: parsed.data.providers,
+      maxPages: parsed.data.maxPages,
+      maxDepth: parsed.data.maxDepth,
+    },
   });
 
   return NextResponse.json(

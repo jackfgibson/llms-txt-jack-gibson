@@ -21,7 +21,7 @@ export const crawlSite = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { siteId, crawlId, url, providers = ["anthropic"] } = event.data;
+    const { siteId, crawlId, url, providers = ["anthropic"], maxPages = 25, maxDepth = 3 } = event.data;
 
     // ── Step 1: mark crawling ────────────────────────────────────────────────
     await step.run("mark-crawling", async () => {
@@ -36,7 +36,7 @@ export const crawlSite = inngest.createFunction(
       const { crawl } = await import("@/lib/crawler/crawl");
       const { extractPage } = await import("@/lib/extract/extract");
 
-      const result = await crawl(url, { maxPages: 50, concurrency: 6 });
+      const result = await crawl(url, { maxPages, maxDepth, concurrency: 6 });
 
       const extractedPages = result.pages.map((p) => ({
         ...extractPage(p.html, p.finalUrl),
@@ -109,7 +109,7 @@ export const crawlSite = inngest.createFunction(
         depth: p.depth,
       }));
 
-      const result = curate(input, { maxPages: 40 });
+      const result = curate(input, { maxPages });
 
       for (const scored of result.scored) {
         await db
@@ -196,7 +196,7 @@ export const crawlSite = inngest.createFunction(
             rawSiteDescription,
             sectionsCast,
             cache,
-            provider as "anthropic" | "openai",
+            provider as "anthropic" | "openai" | "gemini",
           );
           return { provider, content: r.content, validation: r.validation, mode: r.mode };
         }),

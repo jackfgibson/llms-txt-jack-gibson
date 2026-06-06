@@ -65,7 +65,15 @@ const STATUS_VARIANT: Record<
 const PROVIDER_META: Record<string, { logo: string; label: string }> = {
   anthropic: { logo: "/providers/claude.png",   label: "Claude" },
   openai:    { logo: "/providers/openai.png",    label: "GPT" },
+  gemini:    { logo: "/providers/gemini.png",    label: "Gemini" },
   fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM" },
+};
+
+const PROVIDER_MODEL: Record<string, string> = {
+  anthropic: "Claude Haiku",
+  openai:    "GPT-4o mini",
+  gemini:    "Gemini 2.0 Flash",
+  fallback:  "Non-LLM",
 };
 
 function ScoreRing({ score }: { score: number }) {
@@ -112,7 +120,7 @@ function GenerationPanel({
               <div>
                 <p className="text-sm font-medium">Spec validation</p>
                 <p className="text-xs text-muted-foreground">
-                  Mode: <span className="font-mono">{generation.mode}</span>
+                  Model: <span className="font-mono">{PROVIDER_MODEL[generation.provider] ?? generation.provider}</span>
                   {" · "}Version {generation.version}
                 </p>
               </div>

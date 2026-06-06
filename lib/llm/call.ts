@@ -2,8 +2,10 @@
  * Provider-agnostic LLM tool-call helper.
  *
  * When `provider` is explicit, only that provider is attempted (returns null
- * if its key is missing). When omitted, Anthropic is tried first, then OpenAI.
+ * if its key is missing). When omitted, Anthropic → OpenAI → Gemini.
  */
+
+export type LlmProvider = "anthropic" | "openai" | "gemini";
 
 export interface ToolSchema {
   name: string;
@@ -15,7 +17,7 @@ export interface ToolSchema {
 export async function callWithTool(
   prompt: string,
   tool: ToolSchema,
-  provider?: "anthropic" | "openai",
+  provider?: LlmProvider,
 ): Promise<Record<string, unknown> | null> {
   if (provider === "anthropic") {
     return process.env.ANTHROPIC_API_KEY?.trim()
@@ -27,9 +29,15 @@ export async function callWithTool(
       ? callOpenAI(prompt, tool)
       : null;
   }
-  // Auto-select: Anthropic → OpenAI
+  if (provider === "gemini") {
+    return process.env.GOOGLE_API_KEY?.trim()
+      ? callGemini(prompt, tool)
+      : null;
+  }
+  // Auto-select: Anthropic → OpenAI → Gemini
   if (process.env.ANTHROPIC_API_KEY?.trim()) return callAnthropic(prompt, tool);
   if (process.env.OPENAI_API_KEY?.trim()) return callOpenAI(prompt, tool);
+  if (process.env.GOOGLE_API_KEY?.trim()) return callGemini(prompt, tool);
   return null;
 }
 
@@ -102,4 +110,50 @@ async function callOpenAI(
   } catch {
     return null;
   }
+}
+
+// ── Gemini ─────────────────────────────────────────────────────────────────
+
+async function callGemini(
+  prompt: string,
+  tool: ToolSchema,
+): Promise<Record<string, unknown> | null> {
+  const { GoogleGenerativeAI, SchemaType, FunctionCallingMode } =
+    await import("@google/generative-ai");
+
+  const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    tools: [
+      {
+        functionDeclarations: [
+          {
+            name: tool.name,
+            description: tool.description,
+            parameters: {
+              type: SchemaType.OBJECT,
+              properties: Object.fromEntries(
+                Object.entries(tool.properties).map(([k, v]) => [
+                  k,
+                  { type: SchemaType.STRING, description: v.description },
+                ]),
+              ),
+              required: tool.required,
+            },
+          },
+        ],
+      },
+    ],
+    toolConfig: {
+      functionCallingConfig: {
+        mode: FunctionCallingMode.ANY,
+        allowedFunctionNames: [tool.name],
+      },
+    },
+  });
+
+  const result = await model.generateContent(prompt);
+  const call = result.response.functionCalls()?.[0];
+  if (!call) return null;
+  return call.args as Record<string, unknown>;
 }
