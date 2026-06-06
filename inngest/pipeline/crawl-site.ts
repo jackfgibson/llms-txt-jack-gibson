@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { inngest } from "../client";
 import { crawlRequested, crawlCompleted } from "../events";
 import { crawl } from "@/lib/crawler/crawl";
@@ -12,6 +12,17 @@ export const crawlSite = inngest.createFunction(
     id: "crawl-site",
     triggers: [{ event: crawlRequested }],
     retries: 3,
+    onFailure: async ({ error, event }) => {
+      const { crawlId } = event.data.event.data as { crawlId: string };
+      await db
+        .update(schema.crawls)
+        .set({
+          status: "failed",
+          finishedAt: new Date(),
+          progress: { phase: `failed: ${error.message.slice(0, 120)}` },
+        })
+        .where(eq(schema.crawls.id, crawlId));
+    },
   },
   async ({ event, step }) => {
     const { siteId, crawlId, url } = event.data;
@@ -107,8 +118,10 @@ export const crawlSite = inngest.createFunction(
           .update(schema.pages)
           .set({ score: scored.score, pageType: scored.pageType })
           .where(
-            eq(schema.pages.crawlId, crawlId) &&
+            and(
+              eq(schema.pages.crawlId, crawlId),
               eq(schema.pages.url, scored.url),
+            ),
           );
       }
 
