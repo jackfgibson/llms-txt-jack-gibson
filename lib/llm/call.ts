@@ -1,10 +1,8 @@
 /**
  * Provider-agnostic LLM tool-call helper.
  *
- * Provider selection (first key wins):
- *   ANTHROPIC_API_KEY → Claude Haiku
- *   OPENAI_API_KEY    → GPT-4o-mini
- *   (neither)         → returns null; caller falls back to heuristics
+ * When `provider` is explicit, only that provider is attempted (returns null
+ * if its key is missing). When omitted, Anthropic is tried first, then OpenAI.
  */
 
 export interface ToolSchema {
@@ -17,13 +15,21 @@ export interface ToolSchema {
 export async function callWithTool(
   prompt: string,
   tool: ToolSchema,
+  provider?: "anthropic" | "openai",
 ): Promise<Record<string, unknown> | null> {
-  if (process.env.ANTHROPIC_API_KEY?.trim()) {
-    return callAnthropic(prompt, tool);
+  if (provider === "anthropic") {
+    return process.env.ANTHROPIC_API_KEY?.trim()
+      ? callAnthropic(prompt, tool)
+      : null;
   }
-  if (process.env.OPENAI_API_KEY?.trim()) {
-    return callOpenAI(prompt, tool);
+  if (provider === "openai") {
+    return process.env.OPENAI_API_KEY?.trim()
+      ? callOpenAI(prompt, tool)
+      : null;
   }
+  // Auto-select: Anthropic → OpenAI
+  if (process.env.ANTHROPIC_API_KEY?.trim()) return callAnthropic(prompt, tool);
+  if (process.env.OPENAI_API_KEY?.trim()) return callOpenAI(prompt, tool);
   return null;
 }
 

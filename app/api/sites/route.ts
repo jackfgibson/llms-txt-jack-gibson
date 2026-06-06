@@ -8,8 +8,14 @@ import { slugFromUrl } from "@/lib/api/slug";
 
 export const runtime = "nodejs";
 
+const VALID_PROVIDERS = ["anthropic", "openai", "fallback"] as const;
+
 const bodySchema = z.object({
   url: z.string().url(),
+  providers: z
+    .array(z.enum(VALID_PROVIDERS))
+    .min(1)
+    .default(["anthropic", "openai", "fallback"]),
 });
 
 export async function POST(req: NextRequest) {
@@ -57,7 +63,7 @@ export async function POST(req: NextRequest) {
   // Fire Inngest event (non-blocking).
   await inngest.send({
     name: crawlRequested.name,
-    data: { siteId: site.id, crawlId: crawl.id, url: origin },
+    data: { siteId: site.id, crawlId: crawl.id, url: origin, providers: parsed.data.providers },
   });
 
   return NextResponse.json(

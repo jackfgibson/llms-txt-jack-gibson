@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Progress,
   ProgressLabel,
@@ -27,6 +28,7 @@ interface Generation {
   content: string;
   version: number;
   mode: string;
+  provider: string;
   validation: {
     valid: boolean;
     errors: string[];
@@ -37,7 +39,7 @@ interface Generation {
 
 interface SiteData {
   site: { id: string; url: string; slug: string };
-  latestGeneration: Generation | null;
+  latestGenerations: Generation[];
   recentCrawls: Crawl[];
 }
 
@@ -60,6 +62,12 @@ const STATUS_VARIANT: Record<
   failed: "destructive",
 };
 
+const PROVIDER_META: Record<string, { logo: string; label: string }> = {
+  anthropic: { logo: "/providers/claude.png",   label: "Claude" },
+  openai:    { logo: "/providers/openai.png",    label: "GPT" },
+  fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM" },
+};
+
 function ScoreRing({ score }: { score: number }) {
   const color =
     score >= 80
@@ -78,6 +86,99 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
+function GenerationPanel({
+  generation,
+  slug,
+}: {
+  generation: Generation;
+  slug: string | null;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard.writeText(generation.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Validation */}
+      {generation.validation && (
+        <div className="rounded-xl border border-border p-6">
+          <div className="flex items-start gap-6">
+            <ScoreRing score={generation.validation.score} />
+            <div className="flex-1 space-y-3 pt-1">
+              <div>
+                <p className="text-sm font-medium">Spec validation</p>
+                <p className="text-xs text-muted-foreground">
+                  Mode: <span className="font-mono">{generation.mode}</span>
+                  {" · "}Version {generation.version}
+                </p>
+              </div>
+
+              {generation.validation.errors.length === 0 ? (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CheckIcon className="size-3.5" />
+                  No spec errors
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {generation.validation.errors.map((e) => (
+                    <li
+                      key={e}
+                      className="flex items-start gap-1.5 text-xs text-destructive"
+                    >
+                      <XIcon className="size-3.5 mt-0.5 shrink-0" />
+                      {e}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {generation.validation.warnings.map((w) => (
+                <p key={w} className="text-xs text-muted-foreground">
+                  ⚠ {w}
+                </p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="rounded-xl border border-border overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
+          <span className="text-xs font-mono text-muted-foreground">llms.txt</span>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={copy} className="h-7 gap-1.5 text-xs">
+              {copied ? (
+                <><CheckIcon className="size-3" />Copied</>
+              ) : (
+                <><CopyIcon className="size-3" />Copy</>
+              )}
+            </Button>
+            {slug && (
+              <a
+                href={`/${slug}/llms.txt`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              >
+                <ExternalLinkIcon className="size-3" />
+                Raw
+              </a>
+            )}
+          </div>
+        </div>
+        <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed p-5 overflow-auto max-h-[60vh] bg-background">
+          {generation.content}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 export default function CrawlPage({
   params,
 }: {
@@ -86,7 +187,6 @@ export default function CrawlPage({
   const { id: crawlId } = use(params);
   const [crawl, setCrawl] = useState<Crawl | null>(null);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -113,15 +213,7 @@ export default function CrawlPage({
     return () => clearTimeout(timer);
   }, [crawlId]);
 
-  function copy() {
-    const content = siteData?.latestGeneration?.content;
-    if (!content) return;
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  const generation = siteData?.latestGeneration;
+  const generations = siteData?.latestGenerations ?? [];
   const site = siteData?.site;
   const isRunning =
     !crawl ||
@@ -137,6 +229,8 @@ export default function CrawlPage({
   const hostname = site?.url
     ? new URL(site.url).hostname.replace(/^www\./, "")
     : null;
+
+  const defaultTab = generations[0]?.provider ?? "anthropic";
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-10 min-h-screen">
@@ -205,9 +299,7 @@ export default function CrawlPage({
                     ] as [string, number | undefined][]
                   ).map(([label, val]) => (
                     <div key={label} className="space-y-0.5">
-                      <p className="text-lg font-semibold tabular-nums">
-                        {val ?? "—"}
-                      </p>
+                      <p className="text-lg font-semibold tabular-nums">{val ?? "—"}</p>
                       <p className="text-xs text-muted-foreground">{label}</p>
                     </div>
                   ))}
@@ -226,94 +318,35 @@ export default function CrawlPage({
           </div>
         )}
 
-        {/* Validation */}
-        {generation?.validation && (
-          <div className="rounded-xl border border-border p-6">
-            <div className="flex items-start gap-6">
-              <ScoreRing score={generation.validation.score} />
-              <div className="flex-1 space-y-3 pt-1">
-                <div>
-                  <p className="text-sm font-medium">Spec validation</p>
-                  <p className="text-xs text-muted-foreground">
-                    Mode:{" "}
-                    <span className="font-mono">{generation.mode}</span>
-                    {" · "}Version {generation.version}
-                  </p>
-                </div>
+        {/* Results — one tab per provider */}
+        {generations.length > 0 && (
+          <Tabs defaultValue={defaultTab}>
+            <TabsList className="mb-4">
+              {generations.map((g) => {
+                const meta = PROVIDER_META[g.provider] ?? {
+                  logo: "/providers/fallback.png",
+                  label: g.provider,
+                };
+                return (
+                  <TabsTrigger key={g.provider} value={g.provider} className="gap-2">
+                    <img
+                      src={meta.logo}
+                      alt={meta.label}
+                      className="w-4 h-4 object-contain"
+                      style={{ imageRendering: "pixelated" }}
+                    />
+                    {meta.label}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
 
-                {generation.validation.errors.length === 0 ? (
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <CheckIcon className="size-3.5" />
-                    No spec errors
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {generation.validation.errors.map((e) => (
-                      <li
-                        key={e}
-                        className="flex items-start gap-1.5 text-xs text-destructive"
-                      >
-                        <XIcon className="size-3.5 mt-0.5 shrink-0" />
-                        {e}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {generation.validation.warnings.map((w) => (
-                  <p
-                    key={w}
-                    className="text-xs text-muted-foreground"
-                  >
-                    ⚠ {w}
-                  </p>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* llms.txt output */}
-        {generation && (
-          <div className="rounded-xl border border-border overflow-hidden">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
-              <span className="text-xs font-mono text-muted-foreground">
-                llms.txt
-              </span>
-              <div className="flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" onClick={copy} className="h-7 gap-1.5 text-xs">
-                  {copied ? (
-                    <>
-                      <CheckIcon className="size-3" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <CopyIcon className="size-3" />
-                      Copy
-                    </>
-                  )}
-                </Button>
-                {site && (
-                  <a
-                    href={`/${site.slug}/llms.txt`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <ExternalLinkIcon className="size-3" />
-                    Raw
-                  </a>
-                )}
-              </div>
-            </div>
-
-            {/* Content */}
-            <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed p-5 overflow-auto max-h-[60vh] bg-background">
-              {generation.content}
-            </pre>
-          </div>
+            {generations.map((g) => (
+              <TabsContent key={g.provider} value={g.provider}>
+                <GenerationPanel generation={g} slug={site?.slug ?? null} />
+              </TabsContent>
+            ))}
+          </Tabs>
         )}
 
         {/* Stats row after completion */}
@@ -327,9 +360,7 @@ export default function CrawlPage({
               ] as [string, number | undefined][]
             ).map(([label, val]) => (
               <div key={label} className="space-y-0.5">
-                <p className="text-lg font-semibold tabular-nums">
-                  {val ?? "—"}
-                </p>
+                <p className="text-lg font-semibold tabular-nums">{val ?? "—"}</p>
                 <p className="text-xs text-muted-foreground">{label}</p>
               </div>
             ))}

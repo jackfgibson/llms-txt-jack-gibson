@@ -11,18 +11,16 @@ export interface PageDescriptionResult {
   provenance: string;
 }
 
-/**
- * Generates a grounded 1-2 sentence description and provenance excerpt for a
- * single page. Uses whichever LLM key is configured (Anthropic → OpenAI).
- * Returns null on failure so callers fall back to meta/first-sentence.
- */
-export async function describePage(page: {
-  url: string;
-  title: string | null;
-  h1?: string | null;
-  metaDescription: string | null;
-  mainText: string | null;
-}): Promise<PageDescriptionResult | null> {
+export async function describePage(
+  page: {
+    url: string;
+    title: string | null;
+    h1?: string | null;
+    metaDescription: string | null;
+    mainText: string | null;
+  },
+  provider?: "anthropic" | "openai",
+): Promise<PageDescriptionResult | null> {
   const content = buildContent(page);
   if (!content.trim()) return null;
 
@@ -38,23 +36,27 @@ Write a 1-2 sentence description of what this page contains, grounded ONLY in th
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = await callWithTool(prompt, {
-        name: "describe_page",
-        description: "Describe a page for inclusion in an llms.txt file.",
-        properties: {
-          description: {
-            type: "string",
-            description:
-              "1-2 sentence description (max 200 chars) grounded strictly in the page content.",
+      const raw = await callWithTool(
+        prompt,
+        {
+          name: "describe_page",
+          description: "Describe a page for inclusion in an llms.txt file.",
+          properties: {
+            description: {
+              type: "string",
+              description:
+                "1-2 sentence description (max 200 chars) grounded strictly in the page content.",
+            },
+            provenance: {
+              type: "string",
+              description:
+                "Exact excerpt (20-100 words) from the content that backs the description.",
+            },
           },
-          provenance: {
-            type: "string",
-            description:
-              "Exact excerpt (20-100 words) from the content that backs the description.",
-          },
+          required: ["description", "provenance"],
         },
-        required: ["description", "provenance"],
-      });
+        provider,
+      );
 
       if (!raw) continue;
       const parsed = OutputSchema.safeParse(raw);

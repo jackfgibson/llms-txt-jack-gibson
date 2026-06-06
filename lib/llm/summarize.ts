@@ -13,16 +13,11 @@ export interface SiteSummaryResult {
   provenance: string;
 }
 
-/**
- * Generates a clean site title and 1-2 sentence summary for the llms.txt
- * H1 + blockquote, grounded in the home/about page content.
- * Uses whichever LLM key is configured (Anthropic → OpenAI).
- * Returns null on failure so callers fall back to raw title/meta.
- */
 export async function generateSiteSummary(
   rawTitle: string,
   homeContent: string,
   aboutContent: string | null,
+  provider?: "anthropic" | "openai",
 ): Promise<SiteSummaryResult | null> {
   const combined = [homeContent, aboutContent]
     .filter(Boolean)
@@ -42,28 +37,32 @@ Tasks:
 3. Return the exact excerpt (20-100 words) from the content that the summary is based on.`;
 
   try {
-    const raw = await callWithTool(prompt, {
-      name: "generate_summary",
-      description: "Generate a site title and summary for an llms.txt header.",
-      properties: {
-        siteTitle: {
-          type: "string",
-          description:
-            "Clean product/site name for the H1 — no taglines, no domain suffix, no ' | Brand' noise.",
+    const raw = await callWithTool(
+      prompt,
+      {
+        name: "generate_summary",
+        description: "Generate a site title and summary for an llms.txt header.",
+        properties: {
+          siteTitle: {
+            type: "string",
+            description:
+              "Clean product/site name for the H1 — no taglines, no domain suffix, no ' | Brand' noise.",
+          },
+          summary: {
+            type: "string",
+            description:
+              "1-2 sentence description of what the site does, grounded strictly in the provided content.",
+          },
+          provenance: {
+            type: "string",
+            description:
+              "Exact excerpt (20-100 words) from the content that the summary is based on.",
+          },
         },
-        summary: {
-          type: "string",
-          description:
-            "1-2 sentence description of what the site does, grounded strictly in the provided content.",
-        },
-        provenance: {
-          type: "string",
-          description:
-            "Exact excerpt (20-100 words) from the content that the summary is based on.",
-        },
+        required: ["siteTitle", "summary", "provenance"],
       },
-      required: ["siteTitle", "summary", "provenance"],
-    });
+      provider,
+    );
 
     if (!raw) return null;
     const parsed = OutputSchema.safeParse(raw);

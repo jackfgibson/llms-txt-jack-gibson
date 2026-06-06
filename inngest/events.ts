@@ -5,6 +5,7 @@ export const crawlRequested = eventType("site/crawl.requested", {
     siteId: string;
     crawlId: string;
     url: string;
+    providers: string[]; // ["anthropic", "openai", "fallback"]
   }>(),
 });
 

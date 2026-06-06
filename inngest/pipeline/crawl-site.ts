@@ -21,7 +21,7 @@ export const crawlSite = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { siteId, crawlId, url } = event.data;
+    const { siteId, crawlId, url, providers = ["anthropic"] } = event.data;
 
     // ── Step 1: mark crawling ────────────────────────────────────────────────
     await step.run("mark-crawling", async () => {
@@ -149,9 +149,10 @@ export const crawlSite = inngest.createFunction(
         .where(eq(schema.crawls.id, crawlId));
     });
 
-    // ── Step 4: generate llms.txt ────────────────────────────────────────────
-    const generationResult = await step.run("generate", async () => {
+    // ── Step 4: generate llms.txt for each selected provider in parallel ────────
+    const generationResults = await step.run("generate", async () => {
       const { generateWithLlm } = await import("@/lib/llmstxt/generate-llm");
+      const { generateFallback } = await import("@/lib/llmstxt/generate");
 
       const homePage = curateResult.sections
         .flatMap((s) => s.pages)
@@ -162,7 +163,6 @@ export const crawlSite = inngest.createFunction(
       const rawSiteDescription =
         homePage?.metaDescription ?? homePage?.description ?? null;
 
-      // DB-backed description cache adapter (content_hash → description)
       const cache = {
         async get(contentHash: string) {
           const rows = await db
@@ -182,33 +182,51 @@ export const crawlSite = inngest.createFunction(
         },
       };
 
-      const result = await generateWithLlm(
-        rawSiteTitle,
-        rawSiteDescription,
-        curateResult.sections as Parameters<typeof generateWithLlm>[2],
-        cache,
+      const sectionsCast = curateResult.sections as Parameters<typeof generateWithLlm>[2];
+
+      // Run all selected providers in parallel
+      const results = await Promise.all(
+        providers.map(async (provider) => {
+          if (provider === "fallback") {
+            const r = generateFallback(rawSiteTitle, rawSiteDescription, sectionsCast);
+            return { provider, content: r.content, validation: r.validation, mode: r.mode };
+          }
+          const r = await generateWithLlm(
+            rawSiteTitle,
+            rawSiteDescription,
+            sectionsCast,
+            cache,
+            provider as "anthropic" | "openai",
+          );
+          return { provider, content: r.content, validation: r.validation, mode: r.mode };
+        }),
       );
 
-      return { content: result.content, validation: result.validation, mode: result.mode };
+      return results;
     });
 
-    // ── Step 5: persist generation + mark completed ──────────────────────────
+    // ── Step 5: persist all generations + mark completed ─────────────────────
     const generation = await step.run("persist-generation", async () => {
       const [{ maxVersion }] = await db
         .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
         .from(schema.generations)
         .where(eq(schema.generations.siteId, siteId));
 
-      const [inserted] = await db
+      const version = maxVersion + 1;
+
+      const inserted = await db
         .insert(schema.generations)
-        .values({
-          siteId,
-          crawlId,
-          version: maxVersion + 1,
-          content: generationResult.content,
-          validation: generationResult.validation,
-          mode: generationResult.mode,
-        })
+        .values(
+          generationResults.map((r) => ({
+            siteId,
+            crawlId,
+            version,
+            content: r.content,
+            validation: r.validation,
+            mode: r.mode,
+            provider: r.provider,
+          })),
+        )
         .onConflictDoNothing()
         .returning();
 
@@ -217,7 +235,10 @@ export const crawlSite = inngest.createFunction(
         .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
         .where(eq(schema.crawls.id, crawlId));
 
-      return { generationId: inserted?.id, score: generationResult.validation.score };
+      const bestScore = Math.max(
+        ...generationResults.map((r) => r.validation.score),
+      );
+      return { generationIds: inserted.map((g) => g.id), score: bestScore, version };
     });
 
     await step.sendEvent("crawl-completed", {
@@ -225,11 +246,11 @@ export const crawlSite = inngest.createFunction(
       data: {
         siteId,
         crawlId,
-        generationId: generation.generationId ?? "",
+        generationId: generation.generationIds[0] ?? "",
         score: generation.score,
       },
     });
 
-    return { crawlStats, score: generation.score, generationId: generation.generationId };
+    return { crawlStats, score: generation.score, generationIds: generation.generationIds };
   },
 );

@@ -110,13 +110,14 @@ export const generations = pgTable(
     crawlId: uuid("crawl_id")
       .notNull()
       .references(() => crawls.id, { onDelete: "cascade" }),
-    version: integer("version").notNull(), // monotonic per site
+    version: integer("version").notNull(), // monotonic per site (same across parallel providers)
     content: text("content").notNull(),
     validation: jsonb("validation").$type<ValidationResult>(),
     mode: generationMode("mode").notNull(),
+    provider: text("provider").notNull().default("anthropic"), // anthropic | openai | fallback
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [uniqueIndex("generations_site_version_uq").on(t.siteId, t.version)],
+  (t) => [uniqueIndex("generations_site_version_provider_uq").on(t.siteId, t.version, t.provider)],
 );
 
 export const changeEvents = pgTable(

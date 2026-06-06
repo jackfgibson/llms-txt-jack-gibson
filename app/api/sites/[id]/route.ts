@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -27,20 +27,42 @@ export async function GET(
     .orderBy(desc(schema.crawls.createdAt))
     .limit(10);
 
-  const [latestGeneration] = await db
-    .select()
+  // Get all generations for the latest version (one row per provider)
+  const [{ maxVersion }] = await db
+    .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
     .from(schema.generations)
-    .where(eq(schema.generations.siteId, id))
-    .orderBy(desc(schema.generations.version))
-    .limit(1);
+    .where(eq(schema.generations.siteId, id));
+
+  const latestGenerations =
+    maxVersion > 0
+      ? await db
+          .select()
+          .from(schema.generations)
+          .where(
+            and(
+              eq(schema.generations.siteId, id),
+              eq(schema.generations.version, maxVersion),
+            ),
+          )
+          .orderBy(desc(schema.generations.createdAt))
+      : [];
 
   return NextResponse.json({
     site: { ...site, createdAt: site.createdAt.toISOString() },
-    latestGeneration: latestGeneration
-      ? {
-          ...latestGeneration,
-          createdAt: latestGeneration.createdAt.toISOString(),
-        }
+    latestGenerations: latestGenerations.map((g) => ({
+      ...g,
+      createdAt: g.createdAt.toISOString(),
+    })),
+    // Keep backward-compat field pointing at the best-scoring generation
+    latestGeneration: latestGenerations.length > 0
+      ? (() => {
+          const best = latestGenerations.reduce((a, b) => {
+            const sa = (a.validation as { score: number } | null)?.score ?? 0;
+            const sb = (b.validation as { score: number } | null)?.score ?? 0;
+            return sb > sa ? b : a;
+          });
+          return { ...best, createdAt: best.createdAt.toISOString() };
+        })()
       : null,
     recentCrawls: recentCrawls.map((c) => ({
       ...c,

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Separator } from "@/components/ui/separator";
+import { Toggle } from "@/components/ui/toggle";
 
 const FEATURES: Array<{ label: string; href?: string }> = [
   { label: "Respects robots.txt" },
@@ -14,18 +15,31 @@ const FEATURES: Array<{ label: string; href?: string }> = [
   { label: "Dynamic crawl configuration" },
 ];
 
+const ALL_PROVIDERS = ["anthropic", "openai", "fallback"] as const;
+type Provider = (typeof ALL_PROVIDERS)[number];
+
+const PROVIDER_META: Record<Provider, { logo: string; label: string }> = {
+  anthropic: { logo: "/providers/claude.png", label: "Claude" },
+  openai:    { logo: "/providers/openai.png",  label: "GPT" },
+  fallback:  { logo: "/providers/fallback.png", label: "Non-LLM" },
+};
+
 export default function Home() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<Provider[]>([...ALL_PROVIDERS]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (providers.length === 0) {
+      setError("Select at least one provider");
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
-      // Normalize: prepend https:// if no protocol given (e.g. "tryprofound.com")
       const normalized =
         url.startsWith("http://") || url.startsWith("https://")
           ? url
@@ -33,7 +47,7 @@ export default function Home() {
       const res = await fetch("/api/sites", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: normalized }),
+        body: JSON.stringify({ url: normalized, providers }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -73,6 +87,37 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Provider toggle */}
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-xs text-muted-foreground">Generate with</p>
+          <div className="flex gap-2">
+            {ALL_PROVIDERS.map((p) => (
+              <Toggle
+                key={p}
+                pressed={providers.includes(p)}
+                onPressedChange={(pressed) =>
+                  setProviders((prev) =>
+                    pressed ? [...prev, p] : prev.filter((x) => x !== p),
+                  )
+                }
+                aria-label={PROVIDER_META[p].label}
+                variant="outline"
+                className="flex flex-col items-center gap-1.5 h-auto px-5 py-2.5 rounded-xl aria-pressed:bg-muted aria-pressed:border-foreground/20"
+              >
+                <img
+                  src={PROVIDER_META[p].logo}
+                  alt={PROVIDER_META[p].label}
+                  className="w-7 h-7 object-contain"
+                  style={{ imageRendering: "pixelated" }}
+                />
+                <span className="text-[10px] font-medium leading-none">
+                  {PROVIDER_META[p].label}
+                </span>
+              </Toggle>
+            ))}
+          </div>
+        </div>
+
         {/* Input form */}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 focus-within:ring-3 focus-within:ring-ring/50 focus-within:border-ring transition-all">
@@ -88,11 +133,13 @@ export default function Home() {
             <Button
               type="submit"
               size="sm"
-              disabled={loading || !url}
+              disabled={loading || !url || providers.length === 0}
               className="shrink-0 gap-1.5"
             >
               {loading ? (
                 <Spinner className="size-3.5" />
+              ) : providers.length === 0 ? (
+                "Pick at least 1 generation method"
               ) : (
                 <>
                   Generate
