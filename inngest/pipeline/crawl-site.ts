@@ -70,6 +70,8 @@ export const crawlSite = inngest.createFunction(
         .set({
           progress: { phase: "extracting", done: extractedPages.length, total: result.pagesFound },
           stats: {
+            maxPages,
+            maxDepth,
             pagesFound: result.pagesFound,
             pagesCrawled: result.pagesCrawled,
             pagesSkipped: result.pagesSkipped,

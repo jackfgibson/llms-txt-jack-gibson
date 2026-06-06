@@ -195,7 +195,6 @@ export default function Home() {
                   type="number"
                   min={5}
                   max={50}
-                  step={5}
                   value={maxPages}
                   onChange={(e) =>
                     setMaxPages(
@@ -203,7 +202,7 @@ export default function Home() {
                     )
                   }
                   disabled={loading}
-                  className="w-20 h-8 text-sm text-center"
+                  className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -218,7 +217,6 @@ export default function Home() {
                   type="number"
                   min={1}
                   max={3}
-                  step={1}
                   value={maxDepth}
                   onChange={(e) =>
                     setMaxDepth(
@@ -226,7 +224,7 @@ export default function Home() {
                     )
                   }
                   disabled={loading}
-                  className="w-20 h-8 text-sm text-center"
+                  className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>

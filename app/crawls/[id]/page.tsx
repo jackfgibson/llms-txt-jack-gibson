@@ -266,6 +266,7 @@ export default function CrawlPage({
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
+    let siteDataLoaded = false;
 
     async function poll() {
       try {
@@ -274,8 +275,16 @@ export default function CrawlPage({
         const data: Crawl = await res.json();
         setCrawl(data);
 
+        // Fetch site data on the first poll so history is visible immediately,
+        // even while the crawl is still pending/running.
+        if (!siteDataLoaded) {
+          siteDataLoaded = true;
+          const siteRes = await fetch(`/api/sites/${data.siteId}`);
+          if (siteRes.ok) setSiteData(await siteRes.json());
+        }
+
         if (data.status === "completed" || data.status === "failed") {
-          // Fetch site info for the history panel and site metadata
+          // Re-fetch site data on completion to pick up new generation
           const siteRes = await fetch(`/api/sites/${data.siteId}`);
           if (siteRes.ok) setSiteData(await siteRes.json());
           // Fetch change_event for this crawl
@@ -392,9 +401,13 @@ export default function CrawlPage({
   );
   const site = siteData?.site;
 
-  // isLatestCrawl: this crawl is first in the history list (newest) or history hasn't loaded yet
+  // A crawl's generation is "live" only if no later completed crawl exists for this site.
+  // A later failed/pending run does NOT demote the most recent completed run.
   const thisIndex = siteData?.recentCrawls.findIndex((c) => c.id === crawlId) ?? -1;
-  const isLatestCrawl = thisIndex <= 0;
+  const newerCompletedExists =
+    thisIndex > 0 &&
+    (siteData?.recentCrawls.slice(0, thisIndex).some((c) => c.status === "completed") ?? false);
+  const isLatestCrawl = !newerCompletedExists;
   const isRunning =
     !crawl ||
     crawl.status === "pending" ||
@@ -525,15 +538,14 @@ export default function CrawlPage({
               </Progress>
             )}
 
-            {crawl?.stats && (
+            {crawl?.stats?.maxPages != null && (
               <>
                 <Separator />
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   {(
                     [
-                      ["Crawled", crawl.stats.pagesCrawled],
-                      ["Found", crawl.stats.pagesFound],
-                      ["Errors", crawl.stats.errors],
+                      ["Max pages", crawl.stats.maxPages],
+                      ["Max depth", crawl.stats.maxDepth],
                     ] as [string, number | undefined][]
                   ).map(([label, val]) => (
                     <div key={label} className="space-y-0.5">
@@ -593,13 +605,12 @@ export default function CrawlPage({
         )}
 
         {/* Stats row after completion */}
-        {crawl?.status === "completed" && crawl.stats && (
-          <div className="grid grid-cols-3 gap-4 rounded-xl border border-border p-5">
+        {crawl?.status === "completed" && crawl.stats != null && (
+          <div className="grid grid-cols-2 gap-4 rounded-xl border border-border p-5">
             {(
               [
-                ["Pages crawled", crawl.stats.pagesCrawled],
-                ["Pages found", crawl.stats.pagesFound],
-                ["Errors", crawl.stats.errors],
+                ["Max pages", crawl.stats.maxPages],
+                ["Max depth", crawl.stats.maxDepth],
               ] as [string, number | undefined][]
             ).map(([label, val]) => (
               <div key={label} className="space-y-0.5">

@@ -119,11 +119,19 @@ async function downloadAll(crawlId: string, hostname: string) {
   URL.revokeObjectURL(url);
 }
 
+const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
+
 function SiteCard({ group }: { group: SiteGroup }) {
   const { latest, hostname, previousRuns } = group;
   const totalRuns = previousRuns.length + 1;
   const isRunning = latest.status !== "completed" && latest.status !== "failed";
   const isCompleted = latest.status === "completed";
+
+  // All providers ever used across every run, in canonical order, deduplicated
+  const allTimeProviders = PROVIDER_ORDER.filter((p) =>
+    latest.providers.includes(p) ||
+    previousRuns.some((r) => r.providers.includes(p)),
+  );
   const [downloading, setDownloading] = useState(false);
 
   async function handleDownloadSingle(provider: string) {
@@ -140,24 +148,40 @@ function SiteCard({ group }: { group: SiteGroup }) {
 
   return (
     <div className="flex items-center justify-between rounded-xl border border-border px-4 py-3 hover:bg-muted/40 transition-colors">
-      {/* Left: hostname + provider logos + run count */}
+      {/* Left: hostname + all-time logos + run count / current-run logos */}
       <Link href={`/crawls/${latest.crawlId}`} className="flex items-center gap-3 flex-1 min-w-0">
         {isRunning && <Spinner className="size-3.5 shrink-0 text-muted-foreground" />}
         <div className="min-w-0">
-          <p className="text-sm font-medium truncate">{hostname}</p>
-          <div className="flex items-center gap-1.5 mt-0.5">
+          {/* Row 1: hostname · all-time provider logos · run count */}
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-sm font-medium truncate shrink min-w-0">{hostname}</p>
+            <div className="flex items-center gap-1 shrink-0">
+              {allTimeProviders.map((p) => (
+                <img
+                  key={p}
+                  src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
+                  alt={PROVIDER_META[p]?.label ?? p}
+                  className="w-6 h-6 object-contain"
+                  style={{ imageRendering: "pixelated" }}
+                />
+              ))}
+            </div>
+            {totalRuns > 1 && (
+              <span className="text-[10px] text-muted-foreground shrink-0">{totalRuns} runs</span>
+            )}
+          </div>
+          {/* Row 2: current run logos (smaller) */}
+          <div className="flex items-center gap-1 mt-0.5">
             {latest.providers.map((p) => (
               <img
                 key={p}
                 src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
                 alt={PROVIDER_META[p]?.label ?? p}
-                className="w-5 h-5 object-contain"
+                className="w-4 h-4 object-contain"
                 style={{ imageRendering: "pixelated" }}
               />
             ))}
-            {totalRuns > 1 && (
-              <span className="text-[10px] text-muted-foreground ml-0.5">{totalRuns} runs</span>
-            )}
+            <span className="text-[10px] text-muted-foreground ml-0.5">latest run</span>
           </div>
         </div>
       </Link>

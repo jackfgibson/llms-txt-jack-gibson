@@ -56,10 +56,16 @@ export async function POST(req: NextRequest) {
     [site] = await db.insert(schema.sites).values({ url: origin, slug }).returning();
   }
 
-  // Create a new pending crawl.
+  // Create a new pending crawl — store maxPages/maxDepth immediately so the UI can show them.
   const [crawl] = await db
     .insert(schema.crawls)
-    .values({ siteId: site.id, status: "pending", mode: "initial", providers: parsed.data.providers })
+    .values({
+      siteId: site.id,
+      status: "pending",
+      mode: "initial",
+      providers: parsed.data.providers,
+      stats: { maxPages: parsed.data.maxPages, maxDepth: parsed.data.maxDepth },
+    })
     .returning();
 
   // Fire Inngest event (non-blocking).
