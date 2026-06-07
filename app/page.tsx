@@ -36,9 +36,9 @@ export default function Home() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [providers, setProviders] = useState<Provider[]>([...ALL_PROVIDERS]);
-  const [maxPages, setMaxPages] = useState(25);
-  const [maxDepth, setMaxDepth] = useState(3);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [maxPagesInput, setMaxPagesInput] = useState("25");
+  const [maxDepthInput, setMaxDepthInput] = useState("3");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,6 +54,9 @@ export default function Home() {
           ? url
           : `https://${url}`;
 
+      const maxPages = Math.min(50, Math.max(5, Number(maxPagesInput) || 5));
+      const maxDepth = Math.min(3, Math.max(1, Number(maxDepthInput) || 1));
+
       const res = await fetch("/api/sites", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -67,6 +70,7 @@ export default function Home() {
 
       setUrl("");
       toast("Generation kicked off!", {
+        id: "generation-toast",
         description: "Your llms.txt is being generated in the background.",
         action: {
           label: "View results →",
@@ -184,45 +188,47 @@ export default function Home() {
             {/* Crawl options */}
             <div className="flex items-center justify-center gap-8">
               <div className="flex items-center gap-2">
-                <label
-                  htmlFor="max-pages"
-                  className="text-xs text-muted-foreground whitespace-nowrap"
-                >
-                  Max pages
-                </label>
+                <div className="flex flex-col gap-0.5">
+                  <label
+                    htmlFor="max-pages"
+                    className="text-xs text-muted-foreground whitespace-nowrap"
+                  >
+                    Max pages
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">up to 50</span>
+                </div>
                 <Input
                   id="max-pages"
                   type="number"
-                  min={5}
-                  max={50}
-                  value={maxPages}
-                  onChange={(e) =>
-                    setMaxPages(
-                      Math.min(50, Math.max(5, Number(e.target.value) || 5)),
-                    )
-                  }
+                  value={maxPagesInput}
+                  onChange={(e) => setMaxPagesInput(e.target.value)}
+                  onBlur={() => {
+                    const clamped = Math.min(50, Math.max(5, Number(maxPagesInput) || 5));
+                    setMaxPagesInput(String(clamped));
+                  }}
                   disabled={loading}
                   className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
               <div className="flex items-center gap-2">
-                <label
-                  htmlFor="max-depth"
-                  className="text-xs text-muted-foreground whitespace-nowrap"
-                >
-                  Max depth
-                </label>
+                <div className="flex flex-col gap-0.5">
+                  <label
+                    htmlFor="max-depth"
+                    className="text-xs text-muted-foreground whitespace-nowrap"
+                  >
+                    Max depth
+                  </label>
+                  <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">up to 3</span>
+                </div>
                 <Input
                   id="max-depth"
                   type="number"
-                  min={1}
-                  max={3}
-                  value={maxDepth}
-                  onChange={(e) =>
-                    setMaxDepth(
-                      Math.min(3, Math.max(1, Number(e.target.value) || 1)),
-                    )
-                  }
+                  value={maxDepthInput}
+                  onChange={(e) => setMaxDepthInput(e.target.value)}
+                  onBlur={() => {
+                    const clamped = Math.min(3, Math.max(1, Number(maxDepthInput) || 1));
+                    setMaxDepthInput(String(clamped));
+                  }}
                   disabled={loading}
                   className="w-20 h-8 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />

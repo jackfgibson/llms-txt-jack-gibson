@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { HomeIcon, ListIcon } from "lucide-react";
+import { HomeIcon, ListIcon, HelpCircleIcon } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -17,6 +17,7 @@ import {
 const NAV = [
   { label: "Generate", href: "/",        icon: HomeIcon },
   { label: "Results",  href: "/results",  icon: ListIcon },
+  { label: "Why?",     href: "/why",      icon: HelpCircleIcon },
 ];
 
 export function AppSidebar() {

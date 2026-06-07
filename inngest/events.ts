@@ -5,9 +5,11 @@ export const crawlRequested = eventType("site/crawl.requested", {
     siteId: string;
     crawlId: string;
     url: string;
-    providers: string[]; // ["anthropic", "openai", "fallback"]
-    maxPages: number;
-    maxDepth: number;
+    // Optional: recrawls (manual + scheduled) omit these and the pipeline carries
+    // them over from the site's previous crawl.
+    providers?: string[]; // ["anthropic", "openai", "fallback"]
+    maxPages?: number;
+    maxDepth?: number;
   }>(),
 });
 

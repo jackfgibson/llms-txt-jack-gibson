@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql, desc, isNotNull } from "drizzle-orm";
 import { inngest } from "../client";
 import { crawlRequested, crawlCompleted } from "../events";
 import { db, schema } from "@/lib/db";
@@ -21,7 +21,43 @@ export const crawlSite = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { siteId, crawlId, url, providers = ["anthropic"], maxPages = 25, maxDepth = 3 } = event.data;
+    const { siteId, crawlId, url } = event.data;
+
+    // ── Step 0: resolve crawl params ─────────────────────────────────────────
+    // Recrawls (manual "Re-check now" + scheduled cron) don't carry providers or
+    // bounds, so reuse the site's most recent crawl that did. Persist the resolved
+    // providers on this crawl row so the UI history renders the right logos.
+    const { providers, maxPages, maxDepth } = await step.run("resolve-params", async () => {
+      let providers = event.data.providers;
+      let maxPages = event.data.maxPages;
+      let maxDepth = event.data.maxDepth;
+
+      if (!providers || maxPages == null || maxDepth == null) {
+        const [prev] = await db
+          .select({ providers: schema.crawls.providers, stats: schema.crawls.stats })
+          .from(schema.crawls)
+          .where(
+            and(
+              eq(schema.crawls.siteId, siteId),
+              ne(schema.crawls.id, crawlId),
+              isNotNull(schema.crawls.providers),
+            ),
+          )
+          .orderBy(desc(schema.crawls.createdAt))
+          .limit(1);
+
+        providers = providers ?? prev?.providers ?? ["anthropic"];
+        maxPages = maxPages ?? prev?.stats?.maxPages ?? 25;
+        maxDepth = maxDepth ?? prev?.stats?.maxDepth ?? 3;
+      }
+
+      await db
+        .update(schema.crawls)
+        .set({ providers })
+        .where(eq(schema.crawls.id, crawlId));
+
+      return { providers, maxPages, maxDepth };
+    });
 
     // ── Step 1: mark crawling ────────────────────────────────────────────────
     await step.run("mark-crawling", async () => {
@@ -143,111 +179,13 @@ export const crawlSite = inngest.createFunction(
       };
     });
 
-    // ── Step 3.5: mark generating ────────────────────────────────────────────
-    await step.run("mark-generating", async () => {
-      await db
-        .update(schema.crawls)
-        .set({ status: "generating", progress: { phase: "generating" } })
-        .where(eq(schema.crawls.id, crawlId));
-    });
-
-    // ── Step 4: generate llms.txt for each selected provider in parallel ────────
-    const generationResults = await step.run("generate", async () => {
-      const { generateWithLlm } = await import("@/lib/llmstxt/generate-llm");
-      const { generateFallback } = await import("@/lib/llmstxt/generate");
-
-      const homePage = curateResult.sections
-        .flatMap((s) => s.pages)
-        .find((p) => p.pageType === "home");
-
-      const rawSiteTitle =
-        homePage?.title ?? new URL(url).hostname.replace(/^www\./, "");
-      const rawSiteDescription =
-        homePage?.metaDescription ?? homePage?.description ?? null;
-
-      const cache = {
-        async get(contentHash: string) {
-          const rows = await db
-            .select()
-            .from(schema.pageDescriptions)
-            .where(eq(schema.pageDescriptions.contentHash, contentHash))
-            .limit(1);
-          return rows[0]
-            ? { description: rows[0].description, provenance: rows[0].provenance ?? "" }
-            : null;
-        },
-        async set(contentHash: string, description: string, provenance: string) {
-          await db
-            .insert(schema.pageDescriptions)
-            .values({ contentHash, description, provenance })
-            .onConflictDoNothing();
-        },
-      };
-
-      const sectionsCast = curateResult.sections as Parameters<typeof generateWithLlm>[2];
-
-      // Run all selected providers in parallel
-      const results = await Promise.all(
-        providers.map(async (provider) => {
-          if (provider === "fallback") {
-            const r = generateFallback(rawSiteTitle, rawSiteDescription, sectionsCast);
-            return { provider, content: r.content, validation: r.validation, mode: r.mode };
-          }
-          const r = await generateWithLlm(
-            rawSiteTitle,
-            rawSiteDescription,
-            sectionsCast,
-            cache,
-            provider as "anthropic" | "openai" | "gemini",
-          );
-          return { provider, content: r.content, validation: r.validation, mode: r.mode };
-        }),
-      );
-
-      return results;
-    });
-
-    // ── Step 5: persist all generations + mark completed ─────────────────────
-    const generation = await step.run("persist-generation", async () => {
-      const [{ maxVersion }] = await db
-        .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
-        .from(schema.generations)
-        .where(eq(schema.generations.siteId, siteId));
-
-      const version = maxVersion + 1;
-
-      const inserted = await db
-        .insert(schema.generations)
-        .values(
-          generationResults.map((r) => ({
-            siteId,
-            crawlId,
-            version,
-            content: r.content,
-            validation: r.validation,
-            mode: r.mode,
-            provider: r.provider,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning();
-
-      await db
-        .update(schema.crawls)
-        .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
-        .where(eq(schema.crawls.id, crawlId));
-
-      const bestScore = Math.max(
-        ...generationResults.map((r) => r.validation.score),
-      );
-      return { generationIds: inserted.map((g) => g.id), score: bestScore, version };
-    });
-
-    // ── Step 6: compute diff vs. previous crawl + write change_event ─────────
-    await step.run("compute-diff", async () => {
+    // ── Step 4: diff vs. previous crawl + decide whether to regenerate ───────
+    // Running the diff BEFORE generation lets a recrawl with no meaningful change
+    // skip the (expensive) LLM step entirely while still recording a change_event.
+    const decision = await step.run("decide-regen", async () => {
       const { diffCrawls, isMeaningfulChange } = await import("@/lib/monitor/diff");
 
-      // Find the most recent completed crawl for this site that isn't the current one
+      // Most recent completed crawl for this site, excluding the current one.
       const [prevCrawl] = await db
         .select({ id: schema.crawls.id })
         .from(schema.crawls)
@@ -255,13 +193,21 @@ export const crawlSite = inngest.createFunction(
           and(
             eq(schema.crawls.siteId, siteId),
             eq(schema.crawls.status, "completed"),
-            sql`${schema.crawls.id} != ${crawlId}`,
+            ne(schema.crawls.id, crawlId),
           ),
         )
         .orderBy(sql`${schema.crawls.finishedAt} desc nulls last`)
         .limit(1);
 
-      if (!prevCrawl) return; // first crawl — no diff to compute
+      // First crawl ever — always generate, no diff to record.
+      if (!prevCrawl) return { shouldGenerate: true };
+
+      // Is there an existing generation we could keep serving if nothing changed?
+      const [{ genCount }] = await db
+        .select({ genCount: sql<number>`count(*)` })
+        .from(schema.generations)
+        .where(eq(schema.generations.siteId, siteId));
+      const siteHasGeneration = Number(genCount) > 0;
 
       const [prevPages, nextPages] = await Promise.all([
         db.select({ url: schema.pages.url, contentHash: schema.pages.contentHash })
@@ -274,7 +220,11 @@ export const crawlSite = inngest.createFunction(
 
       const diff = diffCrawls(prevPages, nextPages);
       const meaningful = isMeaningfulChange(diff);
+      // Regenerate on meaningful change, or if the site somehow has no generation
+      // to serve yet (e.g. a prior generation failed).
+      const shouldGenerate = meaningful || !siteHasGeneration;
 
+      // Idempotent across retries via the unique index on (to_crawl_id).
       await db
         .insert(schema.changeEvents)
         .values({
@@ -282,21 +232,160 @@ export const crawlSite = inngest.createFunction(
           fromCrawlId: prevCrawl.id,
           toCrawlId: crawlId,
           diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
-          regenerated: meaningful,
+          regenerated: shouldGenerate,
         })
         .onConflictDoNothing();
+
+      return { shouldGenerate };
     });
+
+    // ── Step 5: generate + persist (only when regenerating) ──────────────────
+    let outcome: { generationIds: string[]; score: number; version: number };
+
+    if (decision.shouldGenerate) {
+      await step.run("mark-generating", async () => {
+        await db
+          .update(schema.crawls)
+          .set({ status: "generating", progress: { phase: "generating" } })
+          .where(eq(schema.crawls.id, crawlId));
+      });
+
+      const generationResults = await step.run("generate", async () => {
+        const { generateWithLlm } = await import("@/lib/llmstxt/generate-llm");
+        const { generateFallback } = await import("@/lib/llmstxt/generate");
+
+        const homePage = curateResult.sections
+          .flatMap((s) => s.pages)
+          .find((p) => p.pageType === "home");
+
+        const rawSiteTitle =
+          homePage?.title ?? new URL(url).hostname.replace(/^www\./, "");
+        const rawSiteDescription =
+          homePage?.metaDescription ?? homePage?.description ?? null;
+
+        const cache = {
+          async get(contentHash: string) {
+            const rows = await db
+              .select()
+              .from(schema.pageDescriptions)
+              .where(eq(schema.pageDescriptions.contentHash, contentHash))
+              .limit(1);
+            return rows[0]
+              ? { description: rows[0].description, provenance: rows[0].provenance ?? "" }
+              : null;
+          },
+          async set(contentHash: string, description: string, provenance: string) {
+            await db
+              .insert(schema.pageDescriptions)
+              .values({ contentHash, description, provenance })
+              .onConflictDoNothing();
+          },
+        };
+
+        const sectionsCast = curateResult.sections as Parameters<typeof generateWithLlm>[2];
+
+        // Run all selected providers in parallel.
+        return Promise.all(
+          providers.map(async (provider) => {
+            if (provider === "fallback") {
+              const r = generateFallback(rawSiteTitle, rawSiteDescription, sectionsCast);
+              return { provider, content: r.content, validation: r.validation, mode: r.mode };
+            }
+            const r = await generateWithLlm(
+              rawSiteTitle,
+              rawSiteDescription,
+              sectionsCast,
+              cache,
+              provider as "anthropic" | "openai" | "gemini",
+            );
+            return { provider, content: r.content, validation: r.validation, mode: r.mode };
+          }),
+        );
+      });
+
+      outcome = await step.run("persist-generation", async () => {
+        // Idempotent version: if this crawl already produced generations (i.e. a
+        // prior attempt of this step inserted them), reuse that version instead of
+        // computing a fresh max()+1, which would create duplicate rows on retry.
+        const existing = await db
+          .select({ version: schema.generations.version })
+          .from(schema.generations)
+          .where(eq(schema.generations.crawlId, crawlId))
+          .limit(1);
+
+        let version: number;
+        if (existing.length > 0) {
+          version = existing[0].version;
+        } else {
+          const [{ maxVersion }] = await db
+            .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
+            .from(schema.generations)
+            .where(eq(schema.generations.siteId, siteId));
+          version = maxVersion + 1;
+        }
+
+        const inserted = await db
+          .insert(schema.generations)
+          .values(
+            generationResults.map((r) => ({
+              siteId,
+              crawlId,
+              version,
+              content: r.content,
+              validation: r.validation,
+              mode: r.mode,
+              provider: r.provider,
+            })),
+          )
+          .onConflictDoNothing()
+          .returning();
+
+        await db
+          .update(schema.crawls)
+          .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
+          .where(eq(schema.crawls.id, crawlId));
+
+        const bestScore = Math.max(...generationResults.map((r) => r.validation.score));
+        return { generationIds: inserted.map((g) => g.id), score: bestScore, version };
+      });
+    } else {
+      // No meaningful change — keep the existing live generation, just complete.
+      outcome = await step.run("complete-no-regen", async () => {
+        await db
+          .update(schema.crawls)
+          .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
+          .where(eq(schema.crawls.id, crawlId));
+
+        const [latest] = await db
+          .select()
+          .from(schema.generations)
+          .where(eq(schema.generations.siteId, siteId))
+          .orderBy(desc(schema.generations.version))
+          .limit(1);
+
+        return {
+          generationIds: latest ? [latest.id] : [],
+          score: latest?.validation?.score ?? 0,
+          version: latest?.version ?? 0,
+        };
+      });
+    }
 
     await step.sendEvent("crawl-completed", {
       name: crawlCompleted.name,
       data: {
         siteId,
         crawlId,
-        generationId: generation.generationIds[0] ?? "",
-        score: generation.score,
+        generationId: outcome.generationIds[0] ?? "",
+        score: outcome.score,
       },
     });
 
-    return { crawlStats, score: generation.score, generationIds: generation.generationIds };
+    return {
+      crawlStats,
+      score: outcome.score,
+      generationIds: outcome.generationIds,
+      regenerated: decision.shouldGenerate,
+    };
   },
 );

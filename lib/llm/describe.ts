@@ -2,7 +2,7 @@ import { z } from "zod";
 import { callWithTool, type LlmProvider } from "./call";
 
 const OutputSchema = z.object({
-  description: z.string().min(10).max(300),
+  description: z.string().min(10).max(350),
   provenance: z.string().min(5).max(500),
 });
 
@@ -32,7 +32,10 @@ Title: ${page.title || page.h1 || "(unknown)"}
 Content:
 ${content}
 
-Write a 1-2 sentence description of what this page contains, grounded ONLY in the content above. Never invent facts not present in the content. Also return the exact excerpt (20-100 words) from the content that you based the description on.`;
+Write a 1-2 sentence description grounded ONLY in the content above. Never invent facts not present in the content.
+- Sentence 1: what this page does or contains.
+- Sentence 2 (strongly preferred): start with "For " — who this page is most useful for and what specific task or question it helps them accomplish.
+Also return the exact excerpt (20-100 words) from the content that you based the description on.`;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {

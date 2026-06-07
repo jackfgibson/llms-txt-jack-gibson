@@ -26,9 +26,14 @@ const TYPE_WEIGHT: Record<PageType, number> = {
 };
 
 export function scorePage(input: ScoreInput): number {
-  if (input.isJsShell) return 0;
+  // Truly empty JS shells — no metadata to work with at all — are useless.
+  if (input.isJsShell && !input.hasTitle && !input.hasDescription) return 0;
 
   let score = TYPE_WEIGHT[input.pageType] ?? 5;
+
+  // JS-rendered pages lose half their type weight — we only have metadata,
+  // not article content, so they're less valuable but still includable.
+  if (input.isJsShell) score = Math.floor(score * 0.5);
 
   // Depth penalty: shallower pages are more likely to be canonical entry points.
   score -= input.depth * 3;
@@ -39,7 +44,7 @@ export function scorePage(input: ScoreInput): number {
   // Content richness
   if (input.hasTitle) score += 3;
   if (input.hasDescription) score += 2;
-  if (!input.hasMainText) score -= 5;
+  if (!input.hasMainText) score -= 3; // softer penalty — JS shells can't help this
 
   // Reward pages with meaningful content length (up to a cap)
   const textBonus = Math.min(Math.floor(input.mainTextLength / 500), 5);

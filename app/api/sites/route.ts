@@ -53,7 +53,8 @@ export async function POST(req: NextRequest) {
 
     if (Number(count) > 0) slug = `${slug}-${count}`;
 
-    [site] = await db.insert(schema.sites).values({ url: origin, slug }).returning();
+    // Set a daily schedule so the monitoring cron picks up this site automatically.
+    [site] = await db.insert(schema.sites).values({ url: origin, slug, scheduleCron: "0 3 * * *" }).returning();
   }
 
   // Create a new pending crawl — store maxPages/maxDepth immediately so the UI can show them.

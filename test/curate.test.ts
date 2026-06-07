@@ -42,10 +42,20 @@ describe("classifyPage — path rules", () => {
     })).toBe("legal");
   });
 
-  it("returns other for an unclassifiable page", () => {
+  it("classifies /contact as support", () => {
     expect(classifyPage({
       url: "https://example.com/contact",
       title: "Contact Us",
+      h1: null,
+      metaDescription: null,
+      depth: 2,
+    })).toBe("support");
+  });
+
+  it("returns other for an unclassifiable page", () => {
+    expect(classifyPage({
+      url: "https://example.com/our-story/team-bios",
+      title: null,
       h1: null,
       metaDescription: null,
       depth: 2,
@@ -66,8 +76,12 @@ describe("scorePage", () => {
     mainTextLength: 800,
   };
 
-  it("returns 0 for a JS shell", () => {
-    expect(scorePage({ ...base, pageType: "docs", isJsShell: true })).toBe(0);
+  it("returns 0 for a JS shell with no metadata", () => {
+    expect(scorePage({ ...base, pageType: "docs", isJsShell: true, hasTitle: false, hasDescription: false })).toBe(0);
+  });
+
+  it("returns a positive score for a JS shell that has title and description", () => {
+    expect(scorePage({ ...base, pageType: "docs", isJsShell: true })).toBeGreaterThan(0);
   });
 
   it("docs scores higher than legal", () => {
@@ -121,19 +135,29 @@ describe("curate", () => {
     ];
     const { sections } = curate(pages);
     const types = sections.map((s) => s.heading);
-    expect(types).toContain("home");
-    expect(types).toContain("docs");
-    expect(types).toContain("pricing");
+    expect(types).toContain("Home");
+    expect(types).toContain("Documentation");
+    expect(types).toContain("Pricing");
   });
 
-  it("excludes JS shells", () => {
+  it("excludes JS shells that have no title and no description", () => {
+    const pages = [
+      makePage({ depth: 0, url: "https://example.com/" }),
+      makePage({ depth: 1, url: "https://example.com/shell", isJsShell: true, title: null, metaDescription: null }),
+    ];
+    const { sections } = curate(pages);
+    const allUrls = sections.flatMap((s) => s.pages.map((p) => p.url));
+    expect(allUrls).not.toContain("https://example.com/shell");
+  });
+
+  it("includes JS shells that have metadata", () => {
     const pages = [
       makePage({ depth: 0, url: "https://example.com/" }),
       makePage({ depth: 1, url: "https://example.com/shell", isJsShell: true }),
     ];
     const { sections } = curate(pages);
     const allUrls = sections.flatMap((s) => s.pages.map((p) => p.url));
-    expect(allUrls).not.toContain("https://example.com/shell");
+    expect(allUrls).toContain("https://example.com/shell");
   });
 
   it("respects maxPages limit", () => {
@@ -153,8 +177,8 @@ describe("curate", () => {
     ];
     const { sections } = curate(pages);
     const types = sections.map((s) => s.heading);
-    expect(types.indexOf("home")).toBeLessThan(types.indexOf("docs"));
-    expect(types.indexOf("docs")).toBeLessThan(types.indexOf("blog"));
+    expect(types.indexOf("Home")).toBeLessThan(types.indexOf("Documentation"));
+    expect(types.indexOf("Documentation")).toBeLessThan(types.indexOf("Blog"));
   });
 });
 

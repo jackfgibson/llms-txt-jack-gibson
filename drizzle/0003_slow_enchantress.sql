@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "change_events_to_crawl_uq" ON "change_events" USING btree ("to_crawl_id");

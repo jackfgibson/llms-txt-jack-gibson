@@ -12,7 +12,7 @@ const DEFAULTS: Required<CrawlOptions> = {
   hardCeiling: 150,
   maxDepth: 3,
   concurrency: 6,
-  requestTimeoutMs: 5_000,
+  requestTimeoutMs: 8_000,
   politeDelayMs: 500,
   userAgent: DEFAULT_UA,
 };
@@ -49,8 +49,9 @@ export async function crawl(
   sitemapUrls = [...new Set(sitemapUrls)];
   const sitemapUsed = sitemapUrls.length > 0;
 
-  // BFS queue: [url, depth]
-  const queue: Array<[string, number]> = [];
+  // Per-depth buckets: O(1) enqueue, O(1) dequeue, no large-array shifts or sorts.
+  // Depth 0 = homepage, 1 = nav links discovered from homepage, 2 = sitemap seeds.
+  const buckets: Map<number, Array<[string, number]>> = new Map();
   const enqueued = new Set<string>();
 
   const enqueue = (url: string, depth: number) => {
@@ -59,12 +60,30 @@ export async function crawl(
     if (!sameEffectiveOrigin(normalised, origin)) return;
     if (enqueued.has(normalised)) return;
     enqueued.add(normalised);
-    queue.push([normalised, depth]);
+    if (!buckets.has(depth)) buckets.set(depth, []);
+    buckets.get(depth)!.push([normalised, depth]);
   };
 
+  // Drain the shallowest non-empty bucket, filling the batch.
+  const nextBatch = (n: number): Array<[string, number]> => {
+    const depths = [...buckets.keys()].sort((a, b) => a - b);
+    const batch: Array<[string, number]> = [];
+    for (const d of depths) {
+      const bucket = buckets.get(d)!;
+      while (batch.length < n && bucket.length > 0) {
+        batch.push(bucket.shift()!);
+      }
+      if (bucket.length === 0) buckets.delete(d);
+      if (batch.length === n) break;
+    }
+    return batch;
+  };
+
+  const hasMore = () => buckets.size > 0;
+
   enqueue(originUrl, 0);
-  // Seed sitemap URLs at depth 2 so homepage-discovered nav links (depth 1)
-  // are always processed first — they reflect the site's actual structure.
+  // Seed sitemap URLs at depth 2 so homepage nav links (depth 1) are always
+  // processed first — they reflect the site's actual navigation structure.
   for (const u of sitemapUrls) enqueue(u, 2);
 
   const pages: CrawledPage[] = [];
@@ -73,14 +92,11 @@ export async function crawl(
   let lastRequestTime = 0;
   const deadline = Date.now() + CRAWL_TIME_BUDGET_MS;
 
-  while (queue.length > 0 && pages.length < cfg.hardCeiling) {
+  while (hasMore() && pages.length < cfg.hardCeiling) {
     if (pages.length >= cfg.maxPages) break;
     if (Date.now() > deadline) break;
 
-    // Process shallowest pages first so homepage nav links (depth 1) are
-    // visited before sitemap-seeded URLs (depth 2).
-    queue.sort((a, b) => a[1] - b[1]);
-    const batch = queue.splice(0, cfg.concurrency);
+    const batch = nextBatch(cfg.concurrency);
 
     const tasks = batch.map(([url, depth]) =>
       limit(async (): Promise<void> => {
@@ -101,9 +117,10 @@ export async function crawl(
             signal: AbortSignal.timeout(cfg.requestTimeoutMs),
           });
         } catch (err) {
-          if (err instanceof SsrfError) {
-            pagesSkipped++;
-          } else {
+          // Either way the page wasn't crawled, so it counts as skipped. Non-SSRF
+          // failures are additionally recorded in errors[] for structured logging.
+          pagesSkipped++;
+          if (!(err instanceof SsrfError)) {
             errors.push({ url, reason: String(err) });
           }
           return;
@@ -130,7 +147,7 @@ export async function crawl(
     await Promise.all(tasks);
   }
 
-  pagesSkipped += queue.length;
+  pagesSkipped += [...buckets.values()].reduce((s, b) => s + b.length, 0);
 
   return {
     pages,

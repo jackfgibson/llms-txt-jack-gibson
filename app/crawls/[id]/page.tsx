@@ -16,9 +16,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Progress,
   ProgressLabel,
@@ -34,7 +34,8 @@ interface Crawl {
   providers: string[] | null;
   createdAt: string;
   finishedAt: string | null;
-  generations: Generation[]; // crawl-specific, always present after completion
+  generations: Generation[]; // crawl-specific, or the site's latest if not regenerated
+  reusedGeneration?: boolean; // true when a recrawl found no change and kept the live file
 }
 
 interface Generation {
@@ -396,11 +397,11 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
 
         {/* Back link */}
         <a
-          href="/"
+          href="/results"
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeftIcon className="size-3" />
-          New generation
+          All results
         </a>
 
         {/* Header */}
@@ -502,25 +503,6 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 <ProgressValue className="text-xs" />
               </Progress>
             )}
-
-            {crawl?.stats?.maxPages != null && (
-              <>
-                <Separator />
-                <div className="grid grid-cols-2 gap-4">
-                  {(
-                    [
-                      ["Max pages", crawl.stats.maxPages],
-                      ["Max depth", crawl.stats.maxDepth],
-                    ] as [string, number | undefined][]
-                  ).map(([label, val]) => (
-                    <div key={label} className="space-y-0.5">
-                      <p className="text-lg font-semibold tabular-nums">{val ?? "—"}</p>
-                      <p className="text-xs text-muted-foreground">{label}</p>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
           </div>
         )}
 
@@ -533,28 +515,51 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
           </div>
         )}
 
+        {/* Carried-over notice — recrawl with no meaningful change */}
+        {crawl?.status === "completed" && crawl.reusedGeneration && generations.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            No content changes since the last crawl — showing the current live version
+            {generations[0]?.version ? ` (v${generations[0].version})` : ""}.
+          </p>
+        )}
+
         {/* Results — one tab per provider */}
         {generations.length > 0 && (
           <Tabs defaultValue={defaultTab}>
-            <TabsList className="mb-4">
-              {generations.map((g) => {
-                const meta = PROVIDER_META[g.provider] ?? {
-                  logo: "/providers/fallback.png",
-                  label: g.provider,
-                };
-                return (
-                  <TabsTrigger key={g.provider} value={g.provider} className="gap-2">
-                    <img
-                      src={meta.logo}
-                      alt={meta.label}
-                      className="w-6 h-6 object-contain"
-                      style={{ imageRendering: "pixelated" }}
-                    />
-                    {meta.label}
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
+            <div className="flex items-center justify-between mb-4">
+              <TabsList>
+                {generations.map((g) => {
+                  const meta = PROVIDER_META[g.provider] ?? {
+                    logo: "/providers/fallback.png",
+                    label: g.provider,
+                  };
+                  return (
+                    <TabsTrigger key={g.provider} value={g.provider} className="gap-2">
+                      <img
+                        src={meta.logo}
+                        alt={meta.label}
+                        className="w-6 h-6 object-contain"
+                        style={{ imageRendering: "pixelated" }}
+                      />
+                      {meta.label}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+
+              {crawl?.stats?.maxPages != null && (
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>
+                    <span className="font-semibold text-foreground tabular-nums">{crawl.stats.maxPages}</span>
+                    {" "}max pages
+                  </span>
+                  <span>
+                    <span className="font-semibold text-foreground tabular-nums">{crawl.stats.maxDepth ?? "—"}</span>
+                    {" "}max depth
+                  </span>
+                </div>
+              )}
+            </div>
 
             {generations.map((g) => (
               <TabsContent key={g.provider} value={g.provider}>
@@ -569,84 +574,92 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
           </Tabs>
         )}
 
-        {/* Stats row after completion */}
-        {crawl?.status === "completed" && crawl.stats != null && (
-          <div className="grid grid-cols-2 gap-4 rounded-xl border border-border p-5">
-            {(
-              [
-                ["Max pages", crawl.stats.maxPages],
-                ["Max depth", crawl.stats.maxDepth],
-              ] as [string, number | undefined][]
-            ).map(([label, val]) => (
-              <div key={label} className="space-y-0.5">
-                <p className="text-lg font-semibold tabular-nums">{val ?? "—"}</p>
-                <p className="text-xs text-muted-foreground">{label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Diff panel — only when change_event exists (recrawl) */}
-        {changeEvent && (
-          <div className="rounded-xl border border-border p-5 space-y-3">
-            <p className="text-sm font-medium">Changes since last crawl</p>
-            {changeEvent.diff && (
-              changeEvent.diff.added.length === 0 &&
-              changeEvent.diff.removed.length === 0 &&
-              changeEvent.diff.changed.length === 0
-            ) ? (
-              <p className="text-xs text-muted-foreground">No content changes detected.</p>
-            ) : (
-              <div className="space-y-2 text-xs">
-                {changeEvent.diff?.added.length ? (
-                  <div>
-                    <p className="font-medium text-green-700 dark:text-green-400 mb-1">
-                      +{changeEvent.diff.added.length} added
-                    </p>
-                    <ul className="space-y-0.5 text-muted-foreground">
-                      {changeEvent.diff.added.slice(0, 5).map((u) => (
-                        <li key={u} className="truncate font-mono">{u}</li>
-                      ))}
-                      {changeEvent.diff.added.length > 5 && (
-                        <li className="text-muted-foreground">+{changeEvent.diff.added.length - 5} more</li>
-                      )}
-                    </ul>
-                  </div>
-                ) : null}
-                {changeEvent.diff?.removed.length ? (
-                  <div>
-                    <p className="font-medium text-destructive mb-1">
-                      −{changeEvent.diff.removed.length} removed
-                    </p>
-                    <ul className="space-y-0.5 text-muted-foreground">
-                      {changeEvent.diff.removed.slice(0, 5).map((u) => (
-                        <li key={u} className="truncate font-mono">{u}</li>
-                      ))}
-                      {changeEvent.diff.removed.length > 5 && (
-                        <li className="text-muted-foreground">+{changeEvent.diff.removed.length - 5} more</li>
-                      )}
-                    </ul>
-                  </div>
-                ) : null}
-                {changeEvent.diff?.changed.length ? (
-                  <div>
-                    <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
-                      ~{changeEvent.diff.changed.length} changed
-                    </p>
-                    <ul className="space-y-0.5 text-muted-foreground">
-                      {changeEvent.diff.changed.slice(0, 5).map((u) => (
-                        <li key={u} className="truncate font-mono">{u}</li>
-                      ))}
-                      {changeEvent.diff.changed.length > 5 && (
-                        <li className="text-muted-foreground">+{changeEvent.diff.changed.length - 5} more</li>
-                      )}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-        )}
+        {changeEvent && (() => {
+          const diff = changeEvent.diff;
+          const isEmpty =
+            !diff ||
+            (diff.added.length === 0 &&
+              diff.removed.length === 0 &&
+              diff.changed.length === 0);
+
+          // Default to whichever tab has content
+          const defaultDiffTab =
+            diff && diff.added.length > 0
+              ? "added"
+              : diff && diff.removed.length > 0
+                ? "removed"
+                : "changed";
+
+          return (
+            <div className="rounded-xl border border-border p-5 space-y-3">
+              <p className="text-sm font-medium">Changes since last crawl</p>
+
+              {isEmpty ? (
+                <p className="text-xs text-muted-foreground">No content changes detected.</p>
+              ) : (
+                <Tabs defaultValue={defaultDiffTab}>
+                  <TabsList className="mb-3">
+                    {diff!.added.length > 0 && (
+                      <TabsTrigger value="added" className="gap-1.5 text-xs">
+                        <span className="font-semibold text-green-700 dark:text-green-400">+{diff!.added.length}</span>
+                        Added
+                      </TabsTrigger>
+                    )}
+                    {diff!.removed.length > 0 && (
+                      <TabsTrigger value="removed" className="gap-1.5 text-xs">
+                        <span className="font-semibold text-destructive">−{diff!.removed.length}</span>
+                        Removed
+                      </TabsTrigger>
+                    )}
+                    {diff!.changed.length > 0 && (
+                      <TabsTrigger value="changed" className="gap-1.5 text-xs">
+                        <span className="font-semibold text-amber-700 dark:text-amber-400">~{diff!.changed.length}</span>
+                        Changed
+                      </TabsTrigger>
+                    )}
+                  </TabsList>
+
+                  {diff!.added.length > 0 && (
+                    <TabsContent value="added">
+                      <ScrollArea className="h-48 rounded-md border border-border">
+                        <ul className="p-3 space-y-1">
+                          {diff!.added.map((u) => (
+                            <li key={u} className="text-xs font-mono text-muted-foreground break-all">{u}</li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                    </TabsContent>
+                  )}
+
+                  {diff!.removed.length > 0 && (
+                    <TabsContent value="removed">
+                      <ScrollArea className="h-48 rounded-md border border-border">
+                        <ul className="p-3 space-y-1">
+                          {diff!.removed.map((u) => (
+                            <li key={u} className="text-xs font-mono text-muted-foreground break-all">{u}</li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                    </TabsContent>
+                  )}
+
+                  {diff!.changed.length > 0 && (
+                    <TabsContent value="changed">
+                      <ScrollArea className="h-48 rounded-md border border-border">
+                        <ul className="p-3 space-y-1">
+                          {diff!.changed.map((u) => (
+                            <li key={u} className="text-xs font-mono text-muted-foreground break-all">{u}</li>
+                          ))}
+                        </ul>
+                      </ScrollArea>
+                    </TabsContent>
+                  )}
+                </Tabs>
+              )}
+            </div>
+          );
+        })()}
 
 
 

@@ -138,7 +138,12 @@ export const changeEvents = pgTable(
     regenerated: boolean("regenerated").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("change_events_site_id_idx").on(t.siteId)],
+  (t) => [
+    index("change_events_site_id_idx").on(t.siteId),
+    // One change_event per destination crawl — makes the diff step idempotent
+    // across Inngest retries (insert ... on conflict do nothing).
+    uniqueIndex("change_events_to_crawl_uq").on(t.toCrawlId),
+  ],
 );
 
 // Description cache — unchanged pages (same content_hash) skip re-LLM.

@@ -16,6 +16,7 @@ export function generateFallback(
   siteTitle: string,
   siteDescription: string | null,
   sections: CuratedSection[],
+  opts?: { keyPoints?: string[] },
 ): GenerateResult {
   const lines: string[] = [];
 
@@ -24,6 +25,12 @@ export function generateFallback(
   if (siteDescription) {
     lines.push("");
     lines.push(`> ${siteDescription}`);
+    if (opts?.keyPoints?.length) {
+      lines.push("");
+      for (const kp of opts.keyPoints) {
+        lines.push(`- ${kp}`);
+      }
+    }
   }
 
   lines.push("");
@@ -36,7 +43,7 @@ export function generateFallback(
 
     for (const page of section.pages) {
       const desc = page.description ?? deriveDescription(page);
-      const name = page.title || urlToTitle(page.url);
+      const name = cleanTitle(page.title || urlToTitle(page.url), siteTitle);
       if (desc) {
         lines.push(`- [${name}](${page.url}): ${desc}`);
       } else {
@@ -51,6 +58,27 @@ export function generateFallback(
   const validation = validate(content);
 
   return { content, validation, mode: "fallback" };
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Strip common page-title suffixes that repeat the brand name.
+// e.g. "Men's Shoes. Nike.com" → "Men's Shoes"
+//      "Help Center | Nike Help" → "Help Center"
+//      "Getting Started - Vercel" → "Getting Started"
+function cleanTitle(title: string, siteTitle: string): string {
+  if (!siteTitle) return title;
+  const name = escapeRegex(siteTitle);
+  let t = title;
+  // ". Nike.com" or ". Nike" at end
+  t = t.replace(new RegExp(`[.·]\\s*${name}(\\.[a-z]{2,6})?\\s*$`, "i"), "").trim();
+  // " | Nike Help" or " | Nike" (and anything after) at end
+  t = t.replace(new RegExp(`\\s*\\|\\s*${name}.*$`, "i"), "").trim();
+  // " - Nike" or " — Nike" at end
+  t = t.replace(new RegExp(`\\s*[-–—]\\s*${name}(\\.[a-z]{2,6})?\\s*$`, "i"), "").trim();
+  return t || title;
 }
 
 function urlToTitle(url: string): string {

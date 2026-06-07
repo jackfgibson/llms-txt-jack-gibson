@@ -62,6 +62,7 @@ export async function generateWithLlm(
 
   let siteTitle = rawSiteTitle;
   let siteDescription = rawSiteDescription;
+  let keyPoints: string[] | undefined;
 
   if (homeContent) {
     const summary = await generateSiteSummary(
@@ -73,6 +74,7 @@ export async function generateWithLlm(
     if (summary) {
       siteTitle = summary.siteTitle;
       siteDescription = summary.summary;
+      keyPoints = summary.keyPoints;
     }
   }
 
@@ -190,6 +192,6 @@ export async function generateWithLlm(
     }));
   }
 
-  const result = generateFallback(siteTitle, siteDescription, finalSections);
+  const result = generateFallback(siteTitle, siteDescription, finalSections, { keyPoints });
   return { ...result, mode: "llm" };
 }
