@@ -37,7 +37,7 @@ export default function WhyPage() {
             Help AI navigate your site, and enable it to tell the truth about you.
           </h1>
           <p className="text-base text-muted-foreground leading-relaxed">
-            We&apos;re entering an era where AI agents browse the web, answer questions, and make decisions on behalf of users. How well those agents understand your company determines whether they recommend you, cite you accurately, or ignore you entirely.
+            As we delve deeper into the AI era where agents browse the web, answer questions, and make decisions on behalf of users, making your website AI friendly is paramount. How well those agents understand your company determines whether they recommend you, cite you accurately, or ignore you entirely.
           </p>
         </div>
 
