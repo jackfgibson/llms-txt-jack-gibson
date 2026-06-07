@@ -39,15 +39,21 @@ export async function groupPagesWithLlm(
     .map((p) => `- ${p.url} | ${p.title} | ${p.description ?? ""}`)
     .join("\n");
 
-  const prompt = `You are building an llms.txt file — a structured site index for AI assistants.
+  const prompt = `You are producing the section structure for an llms.txt file (https://llmstxt.org/) — a Markdown document that lets AI assistants quickly understand a website. Each section name you choose becomes an H2 heading in that document, followed by a list of linked pages. AI assistants use the headings to decide which pages are relevant before reading further.
 
-Group the pages below into 2–6 meaningful sections. Rules:
-- Every URL must appear in EXACTLY one section. Do not drop any URL.
-- Section headings should be concise (2–4 words), e.g. "Help & Support", "Products", "Documentation", "Company".
-- If there is a homepage or root URL, put it in its own "Overview" section first.
-- Prefer fewer, broader sections over many narrow ones.
+Group the pages below into 2–6 meaningful sections.
 
-Pages:
+Rules:
+- COMPLETENESS: Every URL must appear in EXACTLY one section. Do not drop or duplicate any URL.
+- OVERVIEW FIRST: If a homepage or root URL (e.g. "/", "/home") is present, place it in a section named "Overview" and list that section first.
+- GROUPING: Cluster conceptually related pages — e.g. "Documentation", "Blog", "Products", "Pricing", "Company", "Help & Support", "API Reference".
+- LOCALIZATION: If there are pages for multiple languages or locales, collect them all in a section named "Localized Pages".
+- OPTIONAL SECTION: The llms.txt spec reserves the name "Optional" for low-value secondary pages (legal, redirects, boilerplate, login/logout). AI readers may skip this section when context is limited. Use it — but only for genuinely low-priority pages.
+- ORDERING: Overview → core content sections → secondary sections → "Optional" (always last).
+- HEADINGS: Section names must be concise (2–4 words) and read naturally as Markdown H2 headings.
+- BREADTH: Prefer fewer, broader sections over many narrow ones.
+
+Pages (url | title | description):
 ${pageList}`;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -147,11 +153,19 @@ async function callOpenAIGroup(
             properties: {
               sections: {
                 type: "array",
+                description: "The grouped sections, covering every URL exactly once.",
                 items: {
                   type: "object",
                   properties: {
-                    heading: { type: "string" },
-                    urls: { type: "array", items: { type: "string" } },
+                    heading: {
+                      type: "string",
+                      description: "Section heading (2–4 words, e.g. 'Help & Support')",
+                    },
+                    urls: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "All URLs belonging to this section.",
+                    },
                   },
                   required: ["heading", "urls"],
                 },
@@ -180,8 +194,9 @@ async function callOpenAIGroup(
 async function callGeminiGroup(
   prompt: string,
 ): Promise<Record<string, unknown> | null> {
-  // Gemini's function calling has limited array-of-objects schema support.
-  // Encode the output as a JSON string inside a simple string property instead.
+  // Gemini's SDK rejects nested array-of-objects in function declarations, so we
+  // accept the output as a JSON string (`sections_json`) and parse it ourselves.
+  // The prompt and tool semantics are identical to Anthropic/OpenAI.
   const { GoogleGenerativeAI, FunctionCallingMode } = await import(
     "@google/generative-ai"
   );
