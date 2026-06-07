@@ -10,10 +10,10 @@ import { normalizePath } from "./normalize";
 // detected and flagged (isJavascriptRendered) but never rendered.
 
 const DEFAULT_UA = "llms-txt-fetcher/0.1";
-const TIMEOUT_MS = 30_000; // total request timeout
+const TIMEOUT_MS = 10_000; // per-request timeout (was 30s — too slow for batched crawls)
 const MAX_REDIRECTS = 3;
-const MAX_RETRIES = 2; // 2 retries → up to 3 attempts
-const RETRY_BASE_MS = 500; // 0.5s, then 1s (2× backoff)
+const MAX_RETRIES = 1; // 1 retry → up to 2 attempts (was 2; retries compound batch latency)
+const RETRY_BASE_MS = 500;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
 
 export interface FetchResult {
@@ -64,6 +64,8 @@ function sleep(ms: number): Promise<void> {
 export interface FetchOptions {
   userAgent?: string;
   timeoutMs?: number;
+  /** Crawl-level abort signal — when fired, aborts in-flight requests immediately. */
+  crawlSignal?: AbortSignal;
 }
 
 export async function fetchPage(
@@ -81,18 +83,24 @@ export async function fetchPage(
 
   let attempt = 0;
   while (true) {
+    if (opts.crawlSignal?.aborted) throw new Error("crawl deadline exceeded");
+
+    // Combine the per-request timeout with the crawl-level deadline so whichever
+    // fires first aborts the fetch. AbortSignal.any requires Node 20+, which is
+    // the Vercel default for modern Next.js.
+    const signal = opts.crawlSignal
+      ? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.crawlSignal])
+      : AbortSignal.timeout(timeoutMs);
+
     try {
-      const res = await safeFetch(
-        url,
-        { headers: { "User-Agent": ua }, signal: AbortSignal.timeout(timeoutMs) },
-        MAX_REDIRECTS,
-      );
+      const res = await safeFetch(url, { headers: { "User-Agent": ua }, signal }, MAX_REDIRECTS);
       const body = await res.text();
       const finalUrl = res.url || url;
       bodyCache.set(key, { body, status: res.status, finalUrl, at: Date.now() });
       return { body, status: res.status, finalUrl };
     } catch (err) {
-      if (attempt < MAX_RETRIES && isRetryable(err)) {
+      // Never retry if the crawl budget expired — bail out fast.
+      if (attempt < MAX_RETRIES && isRetryable(err) && !opts.crawlSignal?.aborted) {
         await sleep(RETRY_BASE_MS * 2 ** attempt);
         attempt++;
         continue;

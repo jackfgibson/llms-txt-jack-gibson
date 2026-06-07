@@ -55,7 +55,10 @@ export async function crawl(
   const visited = new Set<string>();
   const pages: CrawledPage[] = [];
   const failedPages: FailedPage[] = [];
-  const deadline = Date.now() + CRAWL_TIME_BUDGET_MS;
+  // A single signal shared by all in-flight fetches. When the budget expires it
+  // fires and aborts every pending fetchPage call immediately — no more waiting
+  // for individual 10s per-request timeouts to drain.
+  const crawlSignal = AbortSignal.timeout(CRAWL_TIME_BUDGET_MS);
 
   async function crawlPage(
     rawUrl: string,
@@ -67,7 +70,7 @@ export async function crawl(
 
     // ── critical section (synchronous) ──────────────────────────────────────
     if (depth > cfg.maxDepth) return;
-    if (Date.now() > deadline) return;
+    if (crawlSignal.aborted) return;
     if (visited.has(key)) return;
     if (pages.length >= internalMaxPages) return;
     visited.add(key);
@@ -78,6 +81,7 @@ export async function crawl(
       result = await fetchPage(url, {
         userAgent: cfg.userAgent,
         timeoutMs: cfg.requestTimeoutMs,
+        crawlSignal,
       });
     } catch (err) {
       const message = err instanceof SsrfError ? err.message : String(err);
