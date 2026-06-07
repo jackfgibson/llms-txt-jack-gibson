@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, FlaskConicalIcon, MoreHorizontalIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -248,21 +248,6 @@ export default function CrawlPage({
   const [changeEvent, setChangeEvent] = useState<ChangeEvent | null | undefined>(undefined);
   const [rechecking, setRechecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [evalRunning, setEvalRunning] = useState(false);
-  const [evalReport, setEvalReport] = useState<{
-    pairs: Array<{
-      question: string;
-      groundTruth: string;
-      coldAnswer: string;
-      coldCorrect: boolean;
-      withContextAnswer: string;
-      withContextCorrect: boolean;
-    }>;
-    coldScore: number;
-    withContextScore: number;
-    lift: number;
-  } | null>(null);
-  const [evalError, setEvalError] = useState<string | null>(null);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -374,27 +359,7 @@ export default function CrawlPage({
     }
   }
 
-  async function handleRunEval() {
-    if (!crawl) return;
-    setEvalRunning(true);
-    setEvalError(null);
-    setEvalReport(null);
-    try {
-      const res = await fetch(`/api/sites/${crawl.siteId}/eval`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        setEvalError(data.error ?? "Eval failed");
-        return;
-      }
-      setEvalReport(data);
-    } catch {
-      setEvalError("Network error — please try again");
-    } finally {
-      setEvalRunning(false);
-    }
-  }
-
-  const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
+const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
   // Use this crawl's own generations — not the site's latest version
   const generations = (crawl?.generations ?? []).slice().sort(
     (a, b) => PROVIDER_ORDER.indexOf(a.provider) - PROVIDER_ORDER.indexOf(b.provider),
@@ -683,78 +648,7 @@ export default function CrawlPage({
           </div>
         )}
 
-        {/* Eval loop */}
-        {crawl?.status === "completed" && (
-          <div className="rounded-xl border border-border p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Eval loop</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Measures how much the generated file improves factual Q&A accuracy.
-                </p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleRunEval}
-                disabled={evalRunning}
-                className="gap-1.5 shrink-0"
-              >
-                {evalRunning ? <Spinner className="size-3.5" /> : <FlaskConicalIcon className="size-3.5" />}
-                {evalRunning ? "Running…" : "Run eval"}
-              </Button>
-            </div>
 
-            {evalError && (
-              <p className="text-xs text-destructive">{evalError}</p>
-            )}
-
-            {evalReport && (
-              <div className="space-y-4">
-                {/* Score summary */}
-                <div className="grid grid-cols-3 gap-4">
-                  {[
-                    { label: "Cold (no context)", value: `${evalReport.coldScore}%` },
-                    { label: "With llms.txt", value: `${evalReport.withContextScore}%` },
-                    { label: "Lift", value: `+${evalReport.lift}%`, highlight: evalReport.lift > 0 },
-                  ].map(({ label, value, highlight }) => (
-                    <div key={label} className="space-y-0.5">
-                      <p className={`text-lg font-semibold tabular-nums ${highlight ? "text-green-700 dark:text-green-400" : ""}`}>
-                        {value}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <Separator />
-
-                {/* Q&A breakdown */}
-                <div className="space-y-3">
-                  {evalReport.pairs.map((pair, i) => (
-                    <div key={i} className="space-y-1">
-                      <p className="text-xs font-medium">{pair.question}</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className={`rounded-lg border px-3 py-2 text-xs ${pair.coldCorrect ? "border-green-500/30 bg-green-500/5" : "border-destructive/30 bg-destructive/5"}`}>
-                          <p className={`text-[10px] font-medium mb-1 ${pair.coldCorrect ? "text-green-700 dark:text-green-400" : "text-destructive"}`}>
-                            Cold {pair.coldCorrect ? "✓" : "✗"}
-                          </p>
-                          <p className="text-muted-foreground leading-relaxed">{pair.coldAnswer}</p>
-                        </div>
-                        <div className={`rounded-lg border px-3 py-2 text-xs ${pair.withContextCorrect ? "border-green-500/30 bg-green-500/5" : "border-destructive/30 bg-destructive/5"}`}>
-                          <p className={`text-[10px] font-medium mb-1 ${pair.withContextCorrect ? "text-green-700 dark:text-green-400" : "text-destructive"}`}>
-                            With llms.txt {pair.withContextCorrect ? "✓" : "✗"}
-                          </p>
-                          <p className="text-muted-foreground leading-relaxed">{pair.withContextAnswer}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Crawl history */}
         {siteData && siteData.recentCrawls.length > 1 && (
