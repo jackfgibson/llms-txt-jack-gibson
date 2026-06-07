@@ -47,7 +47,7 @@ export const crawlSite = inngest.createFunction(
           .limit(1);
 
         providers = providers ?? prev?.providers ?? ["anthropic"];
-        maxPages = maxPages ?? prev?.stats?.maxPages ?? 25;
+        maxPages = maxPages ?? prev?.stats?.maxPages ?? 20;
         maxDepth = maxDepth ?? prev?.stats?.maxDepth ?? 3;
       }
 

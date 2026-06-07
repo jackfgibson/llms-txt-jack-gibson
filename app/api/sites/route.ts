@@ -16,7 +16,7 @@ const bodySchema = z.object({
     .array(z.enum(VALID_PROVIDERS))
     .min(1)
     .default(["anthropic", "openai", "fallback"]),
-  maxPages: z.number().int().min(5).max(50).default(25),
+  maxPages: z.number().int().min(5).max(50).default(20),
   maxDepth: z.number().int().min(1).max(3).default(3),
 });
 
