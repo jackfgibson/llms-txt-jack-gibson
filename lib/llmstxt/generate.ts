@@ -1,6 +1,5 @@
 import { validate, type ValidationResult } from "./validator";
 import type { CuratedSection } from "@/lib/curate/curate";
-import { SECTION_LABELS } from "@/lib/curate/curate";
 
 export interface GenerateResult {
   content: string;
@@ -32,13 +31,12 @@ export function generateFallback(
   for (const section of sections) {
     if (section.pages.length === 0) continue;
 
-    const label = SECTION_LABELS[section.heading];
-    lines.push(`## ${label}`);
+    lines.push(`## ${section.heading}`);
     lines.push("");
 
     for (const page of section.pages) {
       const desc = page.description ?? deriveDescription(page);
-      const name = page.title || page.url;
+      const name = page.title || urlToTitle(page.url);
       if (desc) {
         lines.push(`- [${name}](${page.url}): ${desc}`);
       } else {
@@ -53,6 +51,19 @@ export function generateFallback(
   const validation = validate(content);
 
   return { content, validation, mode: "fallback" };
+}
+
+function urlToTitle(url: string): string {
+  try {
+    const segment = new URL(url).pathname
+      .split("/")
+      .filter(Boolean)
+      .pop() ?? "";
+    if (!segment) return url;
+    return segment.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  } catch {
+    return url;
+  }
 }
 
 function deriveDescription(page: {

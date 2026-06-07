@@ -44,7 +44,35 @@ export function extractPage(html: string, url: string): ExtractedPage {
   }
 
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
-  const isJsShell = bodyText.length < 100;
+
+  // Signal 1: thin body text
+  const isThinBody = bodyText.length < 200;
+
+  // Signal 2: known SPA framework globals / data attributes
+  const isNextJs =
+    $("script#__NEXT_DATA__").length > 0 || $("[data-reactroot]").length > 0;
+  const isNuxt = html.includes("__NUXT__") || $("div#__nuxt").length > 0;
+  const isAngular =
+    $("[ng-version]").length > 0 || $("[ng-app]").length > 0;
+
+  // Signal 3: generator meta tag (Next.js, Nuxt, Gatsby, CRA)
+  const generatorMeta = $('meta[name="generator"]').attr("content") ?? "";
+  const isSpaGenerator =
+    /next\.js|nuxt|gatsby|create-react-app/i.test(generatorMeta);
+
+  // Signal 4: SPA mount div present but nearly empty
+  const mountText = (
+    $("div#root").text() ||
+    $("div#app").text() ||
+    $("div#__next").text()
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  const isEmptyMount =
+    $("div#root, div#app, div#__next").length > 0 && mountText.length < 200;
+
+  const isJsShell =
+    isThinBody || isNextJs || isNuxt || isAngular || isSpaGenerator || isEmptyMount;
 
   // Only hash substantive content. Thin text (< 300 chars) is often shared
   // navigation/shell boilerplate on JS-heavy sites, which would cause cache

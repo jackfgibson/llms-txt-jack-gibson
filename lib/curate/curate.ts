@@ -15,7 +15,7 @@ export interface CuratedPage {
 }
 
 export interface CuratedSection {
-  heading: PageType;
+  heading: string; // human-readable label, resolved from PageType at curate time
   pages: CuratedPage[];
 }
 
@@ -128,7 +128,7 @@ export function curate(
 
   const sections: CuratedSection[] = SECTION_ORDER.filter((t) =>
     byType.has(t),
-  ).map((t) => ({ heading: t, pages: byType.get(t)! }));
+  ).map((t) => ({ heading: SECTION_LABELS[t], pages: byType.get(t)! }));
 
   return { sections, scored };
 }

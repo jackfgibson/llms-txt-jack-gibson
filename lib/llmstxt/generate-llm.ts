@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { describePage } from "@/lib/llm/describe";
 import { generateSiteSummary } from "@/lib/llm/summarize";
+import { groupPagesWithLlm } from "@/lib/llm/group";
 import { generateFallback, type GenerateResult } from "./generate";
 import type { CuratedSection } from "@/lib/curate/curate";
 import type { LlmProvider } from "@/lib/llm/call";
@@ -125,18 +126,70 @@ export async function generateWithLlm(
     ),
   );
 
-  // ── Enrich sections ───────────────────────────────────────────────────────
-  const enrichedSections: CuratedSection[] = sections.map((section) => ({
-    ...section,
-    pages: section.pages.map((page) => ({
-      ...page,
-      description:
-        (page.contentHash && descMap.get(page.contentHash)) ||
-        descMap.get(page.url) ||
-        page.description,
-    })),
+  // ── Resolve descriptions for every page ───────────────────────────────────
+  const resolvedPages = allPages.map((page) => ({
+    ...page,
+    description:
+      (page.contentHash && descMap.get(page.contentHash)) ||
+      descMap.get(page.url) ||
+      page.description,
   }));
 
-  const result = generateFallback(siteTitle, siteDescription, enrichedSections);
+  // ── LLM grouping (runs after descriptions are ready) ──────────────────────
+  // Ask the LLM to name and group sections intelligently. Falls back to
+  // classifier-based sections if the call fails or returns nothing.
+  const llmSections = await groupPagesWithLlm(
+    resolvedPages.map((p) => ({
+      url: p.url,
+      title: p.title ?? "",
+      description: p.description ?? null,
+    })),
+    provider,
+  );
+
+  let finalSections: CuratedSection[];
+
+  if (llmSections && llmSections.length > 0) {
+    // Build a lookup from url → resolved page
+    const pageByUrl = new Map(resolvedPages.map((p) => [p.url, p]));
+    const usedUrls = new Set<string>();
+
+    finalSections = llmSections
+      .map((s) => {
+        const pages = s.urls
+          .map((u) => pageByUrl.get(u))
+          .filter((p): p is NonNullable<typeof p> => p !== undefined);
+        pages.forEach((p) => usedUrls.add(p.url));
+        return { heading: s.heading, pages };
+      })
+      .filter((s) => s.pages.length > 0);
+
+    // ── Missing-page safety net ──────────────────────────────────────────────
+    // The LLM occasionally drops URLs. Collect any it missed and append them
+    // under "Other" so nothing is silently lost.
+    const missed = resolvedPages.filter((p) => !usedUrls.has(p.url));
+    if (missed.length > 0) {
+      const otherIdx = finalSections.findIndex((s) => s.heading === "Other");
+      if (otherIdx >= 0) {
+        finalSections[otherIdx].pages.push(...missed);
+      } else {
+        finalSections.push({ heading: "Other", pages: missed });
+      }
+    }
+  } else {
+    // Fallback: use classifier-based sections with resolved descriptions
+    finalSections = sections.map((section) => ({
+      ...section,
+      pages: section.pages.map((page) => ({
+        ...page,
+        description:
+          (page.contentHash && descMap.get(page.contentHash)) ||
+          descMap.get(page.url) ||
+          page.description,
+      })),
+    }));
+  }
+
+  const result = generateFallback(siteTitle, siteDescription, finalSections);
   return { ...result, mode: "llm" };
 }

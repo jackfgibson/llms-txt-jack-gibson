@@ -63,7 +63,9 @@ export async function crawl(
   };
 
   enqueue(originUrl, 0);
-  for (const u of sitemapUrls) enqueue(u, 1);
+  // Seed sitemap URLs at depth 2 so homepage-discovered nav links (depth 1)
+  // are always processed first — they reflect the site's actual structure.
+  for (const u of sitemapUrls) enqueue(u, 2);
 
   const pages: CrawledPage[] = [];
   const errors: Array<{ url: string; reason: string }> = [];
@@ -75,6 +77,9 @@ export async function crawl(
     if (pages.length >= cfg.maxPages) break;
     if (Date.now() > deadline) break;
 
+    // Process shallowest pages first so homepage nav links (depth 1) are
+    // visited before sitemap-seeded URLs (depth 2).
+    queue.sort((a, b) => a[1] - b[1]);
     const batch = queue.splice(0, cfg.concurrency);
 
     const tasks = batch.map(([url, depth]) =>
