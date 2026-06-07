@@ -20,6 +20,7 @@ const TYPE_WEIGHT: Record<PageType, number> = {
   about: 10,
   blog: 8,
   pricing: 6,
+  support: 7,
   legal: 2,
   other: 5,
 };

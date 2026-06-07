@@ -7,6 +7,7 @@ export type PageType =
   | "pricing"
   | "legal"
   | "product"
+  | "support"
   | "other";
 
 interface ClassifyInput {
@@ -26,6 +27,7 @@ const PATH_RULES: Array<[RegExp, PageType]> = [
   [/\/(pricing|plans?|billing|subscription)(\/|$)/i, "pricing"],
   [/\/(legal|terms|privacy|tos|gdpr|cookie|license)(\/|$)/i, "legal"],
   [/\/(product|features?|solutions?|platform|use-cases?)(\/|$)/i, "product"],
+  [/\/(help|support|faq|faqs|knowledge-?base|kb|troubleshoot|contact)(\/|$)/i, "support"],
 ];
 
 const TEXT_HINTS: Array<[RegExp, PageType]> = [

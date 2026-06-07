@@ -105,7 +105,10 @@ export async function generateWithLlm(
             url: page.url,
             title: page.title,
             metaDescription: page.metaDescription,
-            mainText: page.mainText,
+            // Suppress thin mainText — Readability sometimes returns shared
+            // navigation boilerplate from JS-shell pages rather than article
+            // content. The LLM should rely on meta + title in that case.
+            mainText: page.mainText && page.mainText.length >= 300 ? page.mainText : null,
           },
           provider,
         );

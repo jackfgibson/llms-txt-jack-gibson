@@ -28,6 +28,7 @@ const SECTION_ORDER: PageType[] = [
   "about",
   "blog",
   "pricing",
+  "support",
   "legal",
   "other",
 ];
@@ -40,6 +41,7 @@ const SECTION_LABELS: Record<PageType, string> = {
   about: "About",
   blog: "Blog",
   pricing: "Pricing",
+  support: "Help & Support",
   legal: "Legal",
   other: "Other Pages",
 };

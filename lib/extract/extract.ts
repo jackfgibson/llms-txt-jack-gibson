@@ -46,9 +46,13 @@ export function extractPage(html: string, url: string): ExtractedPage {
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const isJsShell = bodyText.length < 100;
 
-  const contentHash = mainText
-    ? createHash("sha256").update(mainText).digest("hex")
-    : null;
+  // Only hash substantive content. Thin text (< 300 chars) is often shared
+  // navigation/shell boilerplate on JS-heavy sites, which would cause cache
+  // collisions where all pages receive the first page's cached description.
+  const contentHash =
+    mainText && mainText.length >= 300
+      ? createHash("sha256").update(mainText).digest("hex")
+      : null;
 
   return {
     url,
