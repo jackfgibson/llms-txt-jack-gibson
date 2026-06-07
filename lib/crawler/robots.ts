@@ -31,7 +31,7 @@ export async function fetchRobots(origin: string): Promise<RobotsInfo> {
   }
 
   const rawDelay = parser.getCrawlDelay(UA) ?? parser.getCrawlDelay("*") ?? 0;
-  const crawlDelayMs = Math.min(rawDelay * 1000, 5_000);
+  const crawlDelayMs = Math.min(rawDelay * 1000, 2_000);
 
   return {
     isAllowed(url: string) {

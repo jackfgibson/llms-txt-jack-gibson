@@ -12,10 +12,13 @@ const DEFAULTS: Required<CrawlOptions> = {
   hardCeiling: 150,
   maxDepth: 3,
   concurrency: 6,
-  requestTimeoutMs: 10_000,
+  requestTimeoutMs: 5_000,
   politeDelayMs: 500,
   userAgent: DEFAULT_UA,
 };
+
+// Hard wall on total crawl time — return whatever pages we have if exceeded.
+const CRAWL_TIME_BUDGET_MS = 60_000;
 
 export async function crawl(
   originUrl: string,
@@ -66,9 +69,11 @@ export async function crawl(
   const errors: Array<{ url: string; reason: string }> = [];
   let pagesSkipped = 0;
   let lastRequestTime = 0;
+  const deadline = Date.now() + CRAWL_TIME_BUDGET_MS;
 
   while (queue.length > 0 && pages.length < cfg.hardCeiling) {
     if (pages.length >= cfg.maxPages) break;
+    if (Date.now() > deadline) break;
 
     const batch = queue.splice(0, cfg.concurrency);
 
