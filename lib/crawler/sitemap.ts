@@ -16,18 +16,24 @@ function sameEffectiveOrigin(url: string, origin: string): boolean {
 
 const parser = new XMLParser({ ignoreAttributes: false });
 
+// Max sub-sitemaps fetched per index entry and total across all recursion levels.
+const MAX_SITEMAPS_PER_INDEX = 20;
+const MAX_TOTAL_SITEMAPS = 25;
+
 export async function fetchSitemapUrls(
   sitemapUrl: string,
   origin: string,
   visited = new Set<string>(),
 ): Promise<string[]> {
   if (visited.has(sitemapUrl)) return [];
+  if (visited.size >= MAX_TOTAL_SITEMAPS) return [];
   visited.add(sitemapUrl);
 
   let xml = "";
   try {
     const res = await safeFetch(sitemapUrl, {
       headers: { Accept: "application/xml,text/xml,*/*" },
+      signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) return [];
     xml = await res.text();
@@ -47,7 +53,7 @@ export async function fetchSitemapUrls(
 
   const index = parsed["sitemapindex"] as Record<string, unknown> | undefined;
   if (index) {
-    const sitemaps = normaliseList(index["sitemap"]);
+    const sitemaps = normaliseList(index["sitemap"]).slice(0, MAX_SITEMAPS_PER_INDEX);
     for (const s of sitemaps) {
       const loc = (s as Record<string, unknown>)["loc"];
       if (typeof loc === "string" && sameEffectiveOrigin(loc, origin)) {

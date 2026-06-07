@@ -15,6 +15,7 @@ export async function fetchRobots(origin: string): Promise<RobotsInfo> {
   try {
     const res = await safeFetch(robotsUrl, {
       headers: { "User-Agent": UA },
+      signal: AbortSignal.timeout(8_000),
     });
     if (res.ok) txt = await res.text();
   } catch {
