@@ -1,23 +1,38 @@
 import * as cheerio from "cheerio";
-import pLimit from "p-limit";
-import { safeFetch, SsrfError } from "@/lib/url/ssrf";
-import { fetchRobots } from "./robots";
-import { fetchSitemapUrls } from "./sitemap";
-import type { CrawlOptions, CrawledPage, CrawlResult } from "./types";
+import { SsrfError } from "@/lib/url/ssrf";
+import { fetchPage } from "./fetcher";
+import { normalizeUrl, visitedKey, sameDomain } from "./normalize";
+import {
+  extractPageMeta,
+  extractMainContent,
+  collectFollowLinks,
+  isJavascriptRendered,
+} from "./parse";
+import type {
+  CrawlOptions,
+  CrawledPage,
+  CrawlResult,
+  FailedPage,
+} from "./types";
 
-const DEFAULT_UA = "llms-txt-bot/1.0 (+https://llmstxt.app/bot)";
+// HOW_TO_CRAWL.md §4 — a depth-bounded, page-bounded, same-domain crawl.
+// Recursive with batched parallelism (a bounded BFS/DFS hybrid). Single-threaded
+// async, so each "critical section" below is naturally atomic: all shared-state
+// checks + mutations happen synchronously before the next await.
 
 const DEFAULTS: Required<CrawlOptions> = {
-  maxPages: 30,
-  hardCeiling: 150,
-  maxDepth: 3,
-  concurrency: 6,
-  requestTimeoutMs: 8_000,
-  politeDelayMs: 500,
-  userAgent: DEFAULT_UA,
+  maxPages: 20, // DEFAULT_MAX_PAGES
+  maxDepth: 3, // DEFAULT_MAX_DEPTH
+  concurrency: 4, // CONCURRENCY — fetches per follow-link batch
+  userAgent: "llms-txt-fetcher/0.1",
+  requestTimeoutMs: 30_000,
 };
 
-// Hard wall on total crawl time — return whatever pages we have if exceeded.
+// Statuses that, on their own, do NOT fail the whole crawl (auth / not-found).
+const ACCEPTABLE_FAILURE_STATUSES = new Set([401, 403, 404, 410]);
+
+// Hard wall on total crawl time — return whatever we have rather than hang.
+// (Deliberate project decision; not part of the reference spec.)
 const CRAWL_TIME_BUDGET_MS = 60_000;
 
 export async function crawl(
@@ -25,180 +40,133 @@ export async function crawl(
   opts: CrawlOptions = {},
 ): Promise<CrawlResult> {
   const cfg = { ...DEFAULTS, ...opts };
-  const origin = new URL(originUrl).origin;
 
-  const robots = await fetchRobots(origin);
-  const effectiveDelay = Math.max(cfg.politeDelayMs, robots.crawlDelayMs);
-  const limit = pLimit(cfg.concurrency);
+  // Normalise the start URL up front so the homepage's visited key matches any
+  // self-links discovered later.
+  const startUrl = normalizeUrl(originUrl);
+  const base = new URL(startUrl);
+  const baseScheme = base.protocol.replace(":", "");
+  const baseHost = base.hostname;
 
-  // Seed from sitemap
-  const sitemapCandidates = [...robots.sitemapUrls];
-  if (!sitemapCandidates.length) {
-    sitemapCandidates.push(`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`);
-  }
+  // The "+1 quirk": the homepage is excluded from the generated llms.txt, so we
+  // crawl one extra content page to still end up with `maxPages` usable pages.
+  const internalMaxPages = cfg.maxPages + 1;
 
-  let sitemapUrls: string[] = [];
-  for (const su of sitemapCandidates) {
-    try {
-      const found = await fetchSitemapUrls(su, origin);
-      sitemapUrls.push(...found);
-    } catch {
-      // ignore per-sitemap errors
-    }
-  }
-  sitemapUrls = [...new Set(sitemapUrls)];
-  const sitemapUsed = sitemapUrls.length > 0;
-
-  // Per-depth buckets: O(1) enqueue, O(1) dequeue, no large-array shifts or sorts.
-  // Depth 0 = homepage, 1 = nav links discovered from homepage, 2 = sitemap seeds.
-  const buckets: Map<number, Array<[string, number]>> = new Map();
-  const enqueued = new Set<string>();
-
-  const enqueue = (url: string, depth: number) => {
-    const normalised = canonicalise(url);
-    if (!normalised) return;
-    if (!sameEffectiveOrigin(normalised, origin)) return;
-    if (enqueued.has(normalised)) return;
-    enqueued.add(normalised);
-    if (!buckets.has(depth)) buckets.set(depth, []);
-    buckets.get(depth)!.push([normalised, depth]);
-  };
-
-  // Drain the shallowest non-empty bucket, filling the batch.
-  const nextBatch = (n: number): Array<[string, number]> => {
-    const depths = [...buckets.keys()].sort((a, b) => a - b);
-    const batch: Array<[string, number]> = [];
-    for (const d of depths) {
-      const bucket = buckets.get(d)!;
-      while (batch.length < n && bucket.length > 0) {
-        batch.push(bucket.shift()!);
-      }
-      if (bucket.length === 0) buckets.delete(d);
-      if (batch.length === n) break;
-    }
-    return batch;
-  };
-
-  const hasMore = () => buckets.size > 0;
-
-  enqueue(originUrl, 0);
-  // Seed sitemap URLs at depth 2 so homepage nav links (depth 1) are always
-  // processed first — they reflect the site's actual navigation structure.
-  for (const u of sitemapUrls) enqueue(u, 2);
-
+  const visited = new Set<string>();
   const pages: CrawledPage[] = [];
-  const errors: Array<{ url: string; reason: string }> = [];
-  let pagesSkipped = 0;
-  let lastRequestTime = 0;
+  const failedPages: FailedPage[] = [];
   const deadline = Date.now() + CRAWL_TIME_BUDGET_MS;
 
-  while (hasMore() && pages.length < cfg.hardCeiling) {
-    if (pages.length >= cfg.maxPages) break;
-    if (Date.now() > deadline) break;
+  async function crawlPage(
+    rawUrl: string,
+    parentUrl: string | null,
+    depth: number,
+  ): Promise<void> {
+    const url = normalizeUrl(rawUrl, baseScheme);
+    const key = visitedKey(url);
 
-    const batch = nextBatch(cfg.concurrency);
+    // ── critical section (synchronous) ──────────────────────────────────────
+    if (depth > cfg.maxDepth) return;
+    if (Date.now() > deadline) return;
+    if (visited.has(key)) return;
+    if (pages.length >= internalMaxPages) return;
+    visited.add(key);
+    // ── end critical section ────────────────────────────────────────────────
 
-    const tasks = batch.map(([url, depth]) =>
-      limit(async (): Promise<void> => {
-        if (!robots.isAllowed(url)) {
-          pagesSkipped++;
-          return;
-        }
+    let result;
+    try {
+      result = await fetchPage(url, {
+        userAgent: cfg.userAgent,
+        timeoutMs: cfg.requestTimeoutMs,
+      });
+    } catch (err) {
+      const message = err instanceof SsrfError ? err.message : String(err);
+      failedPages.push({ url, error: message });
+      return;
+    }
 
-        const now = Date.now();
-        const wait = effectiveDelay - (now - lastRequestTime);
-        if (wait > 0) await sleep(wait);
-        lastRequestTime = Date.now();
+    const { status, body, finalUrl } = result;
+    if (status < 200 || status > 299) {
+      failedPages.push({ url, status });
+      return;
+    }
 
-        let res: Response;
-        try {
-          res = await safeFetch(url, {
-            headers: { "User-Agent": cfg.userAgent },
-            signal: AbortSignal.timeout(cfg.requestTimeoutMs),
-          });
-        } catch (err) {
-          // Either way the page wasn't crawled, so it counts as skipped. Non-SSRF
-          // failures are additionally recorded in errors[] for structured logging.
-          pagesSkipped++;
-          if (!(err instanceof SsrfError)) {
-            errors.push({ url, reason: String(err) });
-          }
-          return;
-        }
+    const $ = cheerio.load(body);
+    const meta = extractPageMeta($, finalUrl);
+    const content = extractMainContent($);
+    const javascriptRendered = isJavascriptRendered(body, $);
 
-        const contentType = res.headers.get("content-type") ?? "";
-        if (!contentType.includes("text/html")) {
-          pagesSkipped++;
-          return;
-        }
+    // ── critical section ────────────────────────────────────────────────────
+    if (pages.length >= internalMaxPages) return;
+    pages.push({
+      url,
+      finalUrl,
+      statusCode: status,
+      depth,
+      parentUrl,
+      html: body,
+      title: meta.title,
+      description: meta.description,
+      associatedUrls: meta.associatedUrls,
+      content,
+      javascriptRendered,
+    });
+    const linksToFollow =
+      depth < cfg.maxDepth && pages.length < internalMaxPages
+        ? collectFollowLinks($, finalUrl, baseHost)
+        : [];
+    // ── end critical section ────────────────────────────────────────────────
 
-        const html = await res.text();
-        const finalUrl = res.url || url;
-
-        pages.push({ url, depth, statusCode: res.status, html, finalUrl });
-
-        if (depth < cfg.maxDepth) {
-          const links = extractLinks(html, finalUrl, origin);
-          for (const link of links) enqueue(link, depth + 1);
-        }
-      }),
-    );
-
-    await Promise.all(tasks);
+    // Crawl children in parallel batches of CONCURRENCY.
+    for (const batch of chunk(linksToFollow, cfg.concurrency)) {
+      await Promise.all(batch.map((link) => crawlPage(link, url, depth + 1)));
+    }
   }
 
-  pagesSkipped += [...buckets.values()].reduce((s, b) => s + b.length, 0);
+  // Homepage is crawled first → it is always pages[0] (downstream relies on this).
+  await crawlPage(startUrl, null, 0);
+
+  const error =
+    failedPages.length > 0 && !allAuthErrors(failedPages)
+      ? `Crawl failed: ${failedPages
+          .map((f) => (f.status != null ? `${f.url} (${f.status})` : `${f.url} (${f.error})`))
+          .join("; ")}`
+      : null;
 
   return {
     pages,
-    pagesFound: enqueued.size,
+    failedPages,
+    error,
+    // Legacy stat fields for the existing Inngest pipeline.
+    pagesFound: visited.size,
     pagesCrawled: pages.length,
-    pagesSkipped,
-    sitemapUsed,
-    errors,
+    pagesSkipped: failedPages.length,
+    sitemapUsed: false,
+    errors: failedPages.map((f) => ({
+      url: f.url,
+      reason: f.status != null ? `HTTP ${f.status}` : (f.error ?? "unknown"),
+    })),
   };
 }
 
-// Accepts www <-> non-www redirect pairs as same-origin.
-function sameEffectiveOrigin(url: string, origin: string): boolean {
-  try {
-    const u = new URL(url);
-    const o = new URL(origin);
-    if (u.protocol !== o.protocol) return false;
-    const uh = u.hostname;
-    const oh = o.hostname;
-    return uh === oh || uh === `www.${oh}` || `www.${uh}` === oh;
-  } catch {
-    return false;
-  }
-}
-
-function canonicalise(href: string): string | null {
-  try {
-    const u = new URL(href);
-    u.hash = "";
-    return u.toString();
-  } catch {
-    return null;
-  }
-}
-
-function extractLinks(html: string, baseUrl: string, origin: string): string[] {
-  const $ = cheerio.load(html);
-  const links: string[] = [];
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href) return;
-    try {
-      const resolved = new URL(href, baseUrl).toString();
-      if (sameEffectiveOrigin(resolved, origin)) links.push(resolved);
-    } catch {
-      // ignore unparseable hrefs
-    }
+/**
+ * True iff EVERY failed page is "acceptable": an auth/not-found status
+ * (401/403/404/410) or an error message that looks like an auth failure. Such
+ * failures alone do not fail the whole crawl. HOW_TO_CRAWL.md §4 `allAuthErrors?`.
+ */
+export function allAuthErrors(failed: FailedPage[]): boolean {
+  if (failed.length === 0) return true;
+  return failed.every((f) => {
+    if (f.status != null) return ACCEPTABLE_FAILURE_STATUSES.has(f.status);
+    return /auth|unauthorized|forbidden/i.test(f.error ?? "");
   });
-  return links;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
+
+// Re-export same-domain checks for callers/tests that need them.
+export { sameDomain };

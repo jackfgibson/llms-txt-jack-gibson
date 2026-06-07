@@ -72,7 +72,14 @@ export const crawlSite = inngest.createFunction(
       const { crawl } = await import("@/lib/crawler/crawl");
       const { extractPage } = await import("@/lib/extract/extract");
 
-      const result = await crawl(url, { maxPages, maxDepth, concurrency: 6 });
+      const result = await crawl(url, { maxPages, maxDepth });
+
+      // Crawl is lenient: auth/not-found failures alone don't fail it. But if we
+      // got zero usable pages, there's nothing to generate from — fail so the
+      // crawl is marked failed rather than producing an empty llms.txt.
+      if (result.pages.length === 0) {
+        throw new Error(result.error ?? "Crawl found no pages");
+      }
 
       const extractedPages = result.pages.map((p) => ({
         ...extractPage(p.html, p.finalUrl),
