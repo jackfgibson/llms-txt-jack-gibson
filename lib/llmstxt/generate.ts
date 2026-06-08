@@ -1,9 +1,7 @@
-import { validate, type ValidationResult } from "./validator";
 import type { CuratedSection } from "@/lib/curate/curate";
 
 export interface GenerateResult {
   content: string;
-  validation: ValidationResult;
   mode: "llm" | "fallback";
 }
 
@@ -55,9 +53,7 @@ export function generateFallback(
   }
 
   const content = lines.join("\n").trimEnd() + "\n";
-  const validation = validate(content);
-
-  return { content, validation, mode: "fallback" };
+  return { content, mode: "fallback" };
 }
 
 function escapeRegex(s: string): string {

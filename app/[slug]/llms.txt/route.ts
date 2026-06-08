@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -23,11 +23,22 @@ export async function GET(
     });
   }
 
+  // Serve the newest version. Within that version several providers may have
+  // generated in parallel, so pick deterministically: prefer LLM-grounded output
+  // over fallback, then a stable provider priority (Claude → GPT → Gemini).
   const [generation] = await db
     .select()
     .from(schema.generations)
     .where(eq(schema.generations.siteId, site.id))
-    .orderBy(desc(schema.generations.version))
+    .orderBy(
+      desc(schema.generations.version),
+      sql`case when ${schema.generations.mode} = 'llm' then 0 else 1 end`,
+      sql`case ${schema.generations.provider}
+            when 'anthropic' then 0
+            when 'openai' then 1
+            when 'gemini' then 2
+            else 3 end`,
+    )
     .limit(1);
 
   if (!generation) {

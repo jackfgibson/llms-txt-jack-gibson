@@ -31,12 +31,6 @@ export const generationMode = pgEnum("generation_mode", ["llm", "fallback"]);
 type CrawlStats = Record<string, number>;
 type CrawlProgress = { phase?: string; done?: number; total?: number };
 type OpenGraph = Record<string, string>;
-type ValidationResult = {
-  valid: boolean;
-  errors: string[];
-  warnings: string[];
-  score: number;
-};
 type CrawlDiff = {
   added: string[];
   removed: string[];
@@ -113,7 +107,6 @@ export const generations = pgTable(
       .references(() => crawls.id, { onDelete: "cascade" }),
     version: integer("version").notNull(), // monotonic per site (same across parallel providers)
     content: text("content").notNull(),
-    validation: jsonb("validation").$type<ValidationResult>(),
     mode: generationMode("mode").notNull(),
     provider: text("provider").notNull().default("anthropic"), // anthropic | openai | fallback
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

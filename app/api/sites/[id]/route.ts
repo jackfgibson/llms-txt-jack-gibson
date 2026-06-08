@@ -53,14 +53,11 @@ export async function GET(
       ...g,
       createdAt: g.createdAt.toISOString(),
     })),
-    // Keep backward-compat field pointing at the best-scoring generation
     latestGeneration: latestGenerations.length > 0
       ? (() => {
-          const best = latestGenerations.reduce((a, b) => {
-            const sa = (a.validation as { score: number } | null)?.score ?? 0;
-            const sb = (b.validation as { score: number } | null)?.score ?? 0;
-            return sb > sa ? b : a;
-          });
+          const best =
+            latestGenerations.find((g) => g.provider === "anthropic") ??
+            latestGenerations[0];
           return { ...best, createdAt: best.createdAt.toISOString() };
         })()
       : null,

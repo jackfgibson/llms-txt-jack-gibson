@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,12 +44,6 @@ interface Generation {
   version: number;
   mode: string;
   provider: string;
-  validation: {
-    valid: boolean;
-    errors: string[];
-    warnings: string[];
-    score: number;
-  } | null;
 }
 
 interface SiteData {
@@ -99,24 +93,6 @@ const PROVIDER_MODEL: Record<string, string> = {
   fallback:  "Non-LLM",
 };
 
-function ScoreRing({ score }: { score: number }) {
-  const color =
-    score >= 80
-      ? "text-foreground"
-      : score >= 50
-        ? "text-muted-foreground"
-        : "text-destructive";
-
-  return (
-    <div className="flex flex-col items-center justify-center w-20 h-20 rounded-full border-2 border-border">
-      <span className={`text-2xl font-bold tabular-nums leading-none ${color}`}>
-        {score}
-      </span>
-      <span className="text-[10px] text-muted-foreground mt-0.5">/100</span>
-    </div>
-  );
-}
-
 function GenerationPanel({
   generation,
   slug,
@@ -152,49 +128,6 @@ function GenerationPanel({
 
   return (
     <div className="space-y-6">
-      {/* Validation */}
-      {generation.validation && (
-        <div className="rounded-xl border border-border p-6">
-          <div className="flex items-start gap-6">
-            <ScoreRing score={generation.validation.score} />
-            <div className="flex-1 space-y-3 pt-1">
-              <div>
-                <p className="text-sm font-medium">Spec validation</p>
-                <p className="text-xs text-muted-foreground">
-                  Model: <span className="font-mono">{PROVIDER_MODEL[generation.provider] ?? generation.provider}</span>
-                  {" · "}Version {generation.version}
-                </p>
-              </div>
-
-              {generation.validation.errors.length === 0 ? (
-                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CheckIcon className="size-3.5" />
-                  No spec errors
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {generation.validation.errors.map((e) => (
-                    <li
-                      key={e}
-                      className="flex items-start gap-1.5 text-xs text-destructive"
-                    >
-                      <XIcon className="size-3.5 mt-0.5 shrink-0" />
-                      {e}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {generation.validation.warnings.map((w) => (
-                <p key={w} className="text-xs text-muted-foreground">
-                  ⚠ {w}
-                </p>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Content */}
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
@@ -422,9 +355,6 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 </Badge>
               ) : (
                 <Badge variant="secondary">loading</Badge>
-              )}
-              {crawl?.stats?.sitemapUsed === 1 && (
-                <span className="text-xs text-muted-foreground">via sitemap</span>
               )}
             </div>
           </div>

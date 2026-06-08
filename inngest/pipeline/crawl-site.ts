@@ -119,14 +119,12 @@ export const crawlSite = inngest.createFunction(
             pagesCrawled: result.pagesCrawled,
             pagesSkipped: result.pagesSkipped,
             errors: result.errors.length,
-            sitemapUsed: result.sitemapUsed ? 1 : 0,
           },
         })
         .where(eq(schema.crawls.id, crawlId));
 
       return {
         pagesCrawled: result.pagesCrawled,
-        sitemapUsed: result.sitemapUsed,
         extractedCount: extractedPages.length,
       };
     });
@@ -247,7 +245,7 @@ export const crawlSite = inngest.createFunction(
     });
 
     // ── Step 5: generate + persist (only when regenerating) ──────────────────
-    let outcome: { generationIds: string[]; score: number; version: number };
+    let outcome: { generationIds: string[]; version: number };
 
     if (decision.shouldGenerate) {
       await step.run("mark-generating", async () => {
@@ -296,7 +294,7 @@ export const crawlSite = inngest.createFunction(
           providers.map(async (provider) => {
             if (provider === "fallback") {
               const r = generateFallback(rawSiteTitle, rawSiteDescription, sectionsCast);
-              return { provider, content: r.content, validation: r.validation, mode: r.mode };
+              return { provider, content: r.content, mode: r.mode };
             }
             const r = await generateWithLlm(
               rawSiteTitle,
@@ -305,7 +303,7 @@ export const crawlSite = inngest.createFunction(
               cache,
               provider as "anthropic" | "openai" | "gemini",
             );
-            return { provider, content: r.content, validation: r.validation, mode: r.mode };
+            return { provider, content: r.content, mode: r.mode };
           }),
         );
       });
@@ -339,7 +337,6 @@ export const crawlSite = inngest.createFunction(
               crawlId,
               version,
               content: r.content,
-              validation: r.validation,
               mode: r.mode,
               provider: r.provider,
             })),
@@ -352,8 +349,7 @@ export const crawlSite = inngest.createFunction(
           .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
           .where(eq(schema.crawls.id, crawlId));
 
-        const bestScore = Math.max(...generationResults.map((r) => r.validation.score));
-        return { generationIds: inserted.map((g) => g.id), score: bestScore, version };
+        return { generationIds: inserted.map((g) => g.id), version };
       });
     } else {
       // No meaningful change — keep the existing live generation, just complete.
@@ -372,7 +368,6 @@ export const crawlSite = inngest.createFunction(
 
         return {
           generationIds: latest ? [latest.id] : [],
-          score: latest?.validation?.score ?? 0,
           version: latest?.version ?? 0,
         };
       });
@@ -384,13 +379,11 @@ export const crawlSite = inngest.createFunction(
         siteId,
         crawlId,
         generationId: outcome.generationIds[0] ?? "",
-        score: outcome.score,
       },
     });
 
     return {
       crawlStats,
-      score: outcome.score,
       generationIds: outcome.generationIds,
       regenerated: decision.shouldGenerate,
     };

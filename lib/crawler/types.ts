@@ -4,8 +4,9 @@
 // auth/not-found (see allAuthErrors in crawl.ts).
 
 export interface CrawlOptions {
-  /** User-facing page budget. The crawler internally uses maxPages + 1 (the "+1
-   *  quirk") because the homepage is excluded from the generated llms.txt. */
+  /** User-facing page budget. The crawler internally uses maxPages + 1 so that
+   *  after curation drops/merges the odd page we still tend to land near the
+   *  requested count. */
   maxPages?: number;
   maxDepth?: number;
   /** Parallel fetches per batch of follow-links. Spec default: 4. */
@@ -29,17 +30,10 @@ export interface CrawledPage {
   statusCode: number;
   depth: number;
   parentUrl: string | null;
-  /** Raw HTML body — retained so the extraction stage can re-parse for the
-   *  richer fields (og/canonical/contentHash/Readability) the pipeline needs. */
+  /** Raw HTML body — the extraction stage (extractPage) parses this for the
+   *  fields the pipeline needs (title/og/canonical/contentHash/Readability).
+   *  The crawl itself only parses for link discovery. */
   html: string;
-
-  // ── Fields extracted during the crawl (HOW_TO_CRAWL.md §4.4 / §5.2 / §5.3) ──
-  title: string | null;
-  description: string | null;
-  associatedUrls: string[];
-  /** Main text content (main/article/[role=main] → body minus chrome). */
-  content: string;
-  javascriptRendered: boolean;
 }
 
 export interface CrawlResult {
@@ -53,6 +47,5 @@ export interface CrawlResult {
   pagesFound: number;
   pagesCrawled: number;
   pagesSkipped: number;
-  sitemapUsed: boolean;
   errors: Array<{ url: string; reason: string }>;
 }

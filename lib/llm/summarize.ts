@@ -56,6 +56,11 @@ Tasks:
             description:
               "1-2 sentence description of what the site does, grounded strictly in the provided content.",
           },
+          keyPoints: {
+            type: "string",
+            description:
+              'Optional JSON array of 2-4 short strings (max 150 chars each) highlighting primary use cases, key content areas, notable integrations/sub-brands, or audience — each grounded in the content. e.g. ["Primary use cases: browsing products, managing orders", "Membership layer tied to orders and perks"].',
+          },
           provenance: {
             type: "string",
             description:

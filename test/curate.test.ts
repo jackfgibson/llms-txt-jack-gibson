@@ -192,8 +192,6 @@ describe("generateFallback", () => {
     ];
     const { sections } = curate(pages);
     const result = generateFallback("Acme", "We build things.", sections);
-    expect(result.validation.valid).toBe(true);
-    expect(result.validation.score).toBeGreaterThanOrEqual(85);
     expect(result.mode).toBe("fallback");
     expect(result.content).toContain("# Acme");
     expect(result.content).toContain("## ");

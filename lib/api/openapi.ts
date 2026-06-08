@@ -46,14 +46,6 @@ export const GenerationSchema = registry.register(
     crawlId: z.string().uuid(),
     version: z.number().int(),
     content: z.string().openapi({ description: "The generated llms.txt content" }),
-    validation: z
-      .object({
-        valid: z.boolean(),
-        errors: z.array(z.string()),
-        warnings: z.array(z.string()),
-        score: z.number(),
-      })
-      .nullable(),
     mode: z.enum(["llm", "fallback"]),
     createdAt: z.string().datetime(),
   }),

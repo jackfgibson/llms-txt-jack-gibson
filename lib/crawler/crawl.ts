@@ -2,12 +2,7 @@ import * as cheerio from "cheerio";
 import { SsrfError } from "@/lib/url/ssrf";
 import { fetchPage } from "./fetcher";
 import { normalizeUrl, visitedKey, sameDomain } from "./normalize";
-import {
-  extractPageMeta,
-  extractMainContent,
-  collectFollowLinks,
-  isJavascriptRendered,
-} from "./parse";
+import { collectFollowLinks } from "./parse";
 import type {
   CrawlOptions,
   CrawledPage,
@@ -95,10 +90,11 @@ export async function crawl(
       return;
     }
 
+    // Parse once, only for link discovery. The full content/meta/Readability
+    // extraction happens later in the pipeline (extractPage) from the retained
+    // raw HTML — doing it here too would parse every page twice for fields
+    // nothing downstream reads.
     const $ = cheerio.load(body);
-    const meta = extractPageMeta($, finalUrl);
-    const content = extractMainContent($);
-    const javascriptRendered = isJavascriptRendered(body, $);
 
     // ── critical section ────────────────────────────────────────────────────
     if (pages.length >= internalMaxPages) return;
@@ -109,11 +105,6 @@ export async function crawl(
       depth,
       parentUrl,
       html: body,
-      title: meta.title,
-      description: meta.description,
-      associatedUrls: meta.associatedUrls,
-      content,
-      javascriptRendered,
     });
     const linksToFollow =
       depth < cfg.maxDepth && pages.length < internalMaxPages
@@ -145,7 +136,6 @@ export async function crawl(
     pagesFound: visited.size,
     pagesCrawled: pages.length,
     pagesSkipped: failedPages.length,
-    sitemapUsed: false,
     errors: failedPages.map((f) => ({
       url: f.url,
       reason: f.status != null ? `HTTP ${f.status}` : (f.error ?? "unknown"),

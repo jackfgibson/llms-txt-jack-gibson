@@ -170,24 +170,22 @@ function SiteCard({ group }: { group: SiteGroup }) {
               <span className="text-[10px] text-muted-foreground shrink-0">{totalRuns} runs</span>
             )}
           </div>
-          {/* Row 2: current run logos (smaller) */}
-          <div className="flex items-center gap-1 mt-0.5">
-            {latest.providers.map((p) => (
-              <img
-                key={p}
-                src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
-                alt={PROVIDER_META[p]?.label ?? p}
-                className="w-4 h-4 object-contain"
-                style={{ imageRendering: "pixelated" }}
-              />
-            ))}
-            <span className="text-[10px] text-muted-foreground ml-0.5">latest run</span>
-          </div>
         </div>
       </Link>
 
-      {/* Right: status badge + download + arrow */}
+      {/* Right: latest-run logos + status badge + download + arrow */}
       <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className="flex items-center gap-1">
+          {latest.providers.map((p) => (
+            <img
+              key={p}
+              src={PROVIDER_META[p]?.logo ?? "/providers/fallback.png"}
+              alt={PROVIDER_META[p]?.label ?? p}
+              className="w-4 h-4 object-contain"
+              style={{ imageRendering: "pixelated" }}
+            />
+          ))}
+        </div>
         <Badge
           variant={STATUS_VARIANT[latest.status] ?? "secondary"}
           className={latest.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}

@@ -18,6 +18,5 @@ export const crawlCompleted = eventType("site/crawl.completed", {
     siteId: string;
     crawlId: string;
     generationId: string;
-    score: number;
   }>(),
 });

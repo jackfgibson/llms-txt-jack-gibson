@@ -29,6 +29,13 @@
       "when": 1780797383732,
       "tag": "0003_slow_enchantress",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780866322889,
+      "tag": "0004_ancient_magma",
+      "breakpoints": true
     }
   ]
 }

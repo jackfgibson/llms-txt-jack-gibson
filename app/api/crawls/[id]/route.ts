@@ -61,7 +61,6 @@ export async function GET(
       provider: g.provider,
       mode: g.mode,
       version: g.version,
-      validation: g.validation,
       createdAt: g.createdAt.toISOString(),
     })),
   });
