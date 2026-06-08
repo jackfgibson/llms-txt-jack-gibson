@@ -2,6 +2,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 
 const MAX_REDIRECTS = 5;
+const DNS_TIMEOUT_MS = 5_000;
 
 export class SsrfError extends Error {
   constructor(message: string) {
@@ -53,7 +54,10 @@ function blockedReasonV6(ip: string): string | null {
 export async function assertSafeHost(hostname: string): Promise<string> {
   let address: string;
   try {
-    const result = await dns.lookup(hostname, { family: 0 });
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("DNS lookup timed out")), DNS_TIMEOUT_MS),
+    );
+    const result = await Promise.race([dns.lookup(hostname, { family: 0 }), timeout]);
     address = result.address;
   } catch (e) {
     throw new SsrfError(

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRightIcon, GlobeIcon } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -14,6 +15,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+
+// A URL is "valid enough" if it contains a dot followed by ≥2 non-separator chars
+// (covers .com, .io, .co.uk, etc.). Protocol prefix is stripped before the check.
+function isValidUrl(raw: string): boolean {
+  const host = raw.replace(/^https?:\/\//, "").split(/[/?# ]/)[0];
+  return /\.[a-zA-Z]{2,}/.test(host);
+}
 
 const FEATURES: Array<{ label: string; href?: string }> = [
   { label: "Spec-validated output", href: "https://llmstxt.org/#format" },
@@ -36,6 +44,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [submitHovered, setSubmitHovered] = useState(false);
   const [maxPagesInput, setMaxPagesInput] = useState("20");
   const [maxDepthInput, setMaxDepthInput] = useState("3");
 
@@ -45,13 +54,20 @@ export default function Home() {
       setError("Select at least one provider");
       return;
     }
+
+    const normalized =
+      url.startsWith("http://") || url.startsWith("https://")
+        ? url
+        : `https://${url}`;
+
+    if (!isValidUrl(normalized)) {
+      setError("Invalid URL. Red buttons don't scare you, clearly.");
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
-      const normalized =
-        url.startsWith("http://") || url.startsWith("https://")
-          ? url
-          : `https://${url}`;
 
       const maxPages = Math.min(50, Math.max(5, Number(maxPagesInput) || 5));
       const maxDepth = Math.min(3, Math.max(1, Number(maxDepthInput) || 1));
@@ -83,6 +99,9 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  const urlInvalid = providers.length > 0 && url.trim() !== "" && !isValidUrl(url);
+  const showInvalid = urlInvalid && submitHovered;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
@@ -126,13 +145,20 @@ export default function Home() {
             <Button
               type="submit"
               size="sm"
-              disabled={loading || !url || providers.length === 0}
-              className="shrink-0 gap-1.5"
+              disabled={loading || !url.trim() || providers.length === 0}
+              onMouseEnter={() => setSubmitHovered(true)}
+              onMouseLeave={() => setSubmitHovered(false)}
+              className={cn(
+                "shrink-0 gap-1.5",
+                showInvalid && "!bg-red-100 !text-red-600 !border-red-200 dark:!bg-red-950/30 dark:!text-red-400 dark:!border-red-800",
+              )}
             >
               {loading ? (
                 <Spinner className="size-3.5" />
               ) : providers.length === 0 ? (
                 "Pick at least 1 method"
+              ) : showInvalid ? (
+                "Invalid URL :("
               ) : (
                 <>
                   Generate

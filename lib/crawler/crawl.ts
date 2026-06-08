@@ -20,7 +20,7 @@ const DEFAULTS: Required<CrawlOptions> = {
   maxDepth: 3, // DEFAULT_MAX_DEPTH
   concurrency: 4, // CONCURRENCY — fetches per follow-link batch
   userAgent: "llms-txt-fetcher/0.1",
-  requestTimeoutMs: 30_000,
+  requestTimeoutMs: 10_000,
 };
 
 // Statuses that, on their own, do NOT fail the whole crawl (auth / not-found).
