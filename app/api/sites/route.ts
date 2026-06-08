@@ -35,6 +35,23 @@ export async function POST(req: NextRequest) {
 
   // Normalize to origin only.
   const origin = new URL(parsed.data.url).origin;
+
+  // Fast reachability probe — fail before touching the DB if the site is unreachable.
+  try {
+    const { safeFetch } = await import("@/lib/url/ssrf");
+    const probe = await safeFetch(
+      origin,
+      { headers: { "User-Agent": "llms-txt-fetcher/0.1" }, signal: AbortSignal.timeout(10_000) },
+      3,
+    );
+    void probe.body?.cancel();
+    if (probe.status === 404 || probe.status >= 500) {
+      return NextResponse.json({ error: "Site Unreachable" }, { status: 422 });
+    }
+  } catch {
+    return NextResponse.json({ error: "Site Unreachable" }, { status: 422 });
+  }
+
   let slug = slugFromUrl(origin);
 
   // Upsert site — if URL already registered, return existing site.
