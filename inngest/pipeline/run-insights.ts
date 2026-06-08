@@ -1,4 +1,4 @@
-import { eq, and, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { inngest } from "../client";
 import { insightsRequested, insightsCompleted } from "../events";
 import { db, schema } from "@/lib/db";
@@ -34,12 +34,7 @@ export const runInsights = inngest.createFunction(
     });
 
     // ── Step 2: load data ─────────────────────────────────────────────────────
-    const { questionRows, generationRows } = await step.run("load-data", async () => {
-      const questionRows = await db
-        .select()
-        .from(schema.modelQuestions)
-        .where(eq(schema.modelQuestions.crawlId, crawlId));
-
+    const { generationRows } = await step.run("load-data", async () => {
       const generationRows = await db
         .select()
         .from(schema.generations)
@@ -47,18 +42,53 @@ export const runInsights = inngest.createFunction(
 
       const providers = ["anthropic", "openai", "gemini"] as const;
       for (const p of providers) {
-        if (!questionRows.some((r) => r.provider === p)) {
-          throw new Error(`Missing modelQuestions for provider: ${p}`);
-        }
         if (!generationRows.some((r) => r.provider === p)) {
           throw new Error(`Missing generation for provider: ${p}`);
         }
       }
 
-      return { questionRows, generationRows };
+      return { generationRows };
     });
 
-    // ── Step 3: each model evaluates the other two's questions + ranks structure ─
+    // ── Step 3: ensure Q&A pairs exist (generate on-the-fly for old crawls) ──
+    const questionRows = await step.run("ensure-questions", async () => {
+      const { generateQuestionsForModel } = await import("@/lib/llm/generate-questions");
+
+      const providers = ["anthropic", "openai", "gemini"] as const;
+      const existing = await db
+        .select()
+        .from(schema.modelQuestions)
+        .where(eq(schema.modelQuestions.crawlId, crawlId));
+
+      const missing = providers.filter((p) => !existing.some((q) => q.provider === p));
+
+      if (missing.length > 0) {
+        await Promise.all(
+          missing.map(async (provider) => {
+            const gen = generationRows.find((g) => g.provider === provider)!;
+            const pairs = await generateQuestionsForModel(gen.content, provider);
+            if (!pairs) return;
+            await db
+              .insert(schema.modelQuestions)
+              .values({
+                siteId,
+                crawlId,
+                generationId: gen.id,
+                provider,
+                questions: pairs,
+              })
+              .onConflictDoNothing();
+          }),
+        );
+      }
+
+      return db
+        .select()
+        .from(schema.modelQuestions)
+        .where(eq(schema.modelQuestions.crawlId, crawlId));
+    });
+
+    // ── Step 4: each model evaluates the other two's questions + ranks structure ─
     const evalResults = await step.run("evaluate-all-models", async () => {
       const { evaluateModel } = await import("@/lib/llm/evaluate-model");
 
@@ -96,7 +126,7 @@ export const runInsights = inngest.createFunction(
       return results;
     });
 
-    // ── Step 4: grade all 12 answers (3 models × 4 answers) ─────────────────
+    // ── Step 5: grade all 12 answers (3 models × 4 answers) ─────────────────
     const gradedResults = await step.run("grade-answers", async () => {
       const { gradeAnswer } = await import("@/lib/llm/grade-answer");
 
@@ -142,7 +172,7 @@ export const runInsights = inngest.createFunction(
       return graded;
     });
 
-    // ── Step 5: compute final scores and persist ──────────────────────────────
+    // ── Step 6: compute final scores and persist ──────────────────────────────
     const winner = await step.run("compute-and-persist", async () => {
       const providers = ["anthropic", "openai", "gemini"] as const;
 

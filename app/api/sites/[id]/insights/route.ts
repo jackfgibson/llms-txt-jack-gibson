@@ -47,7 +47,9 @@ export async function POST(
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  // Find most recent crawl for this site that has all 3 modelQuestions rows
+  // Find most recent completed crawl that has generations for all 3 LLM providers
+  const llmProviders = ["anthropic", "openai", "gemini"];
+
   const allCrawls = await db
     .select({ id: schema.crawls.id })
     .from(schema.crawls)
@@ -56,11 +58,12 @@ export async function POST(
 
   let eligibleCrawlId: string | null = null;
   for (const crawl of allCrawls) {
-    const [{ count }] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(schema.modelQuestions)
-      .where(eq(schema.modelQuestions.crawlId, crawl.id));
-    if (Number(count) >= 3) {
+    const gens = await db
+      .select({ provider: schema.generations.provider })
+      .from(schema.generations)
+      .where(eq(schema.generations.crawlId, crawl.id));
+    const hasAll = llmProviders.every((p) => gens.some((g) => g.provider === p));
+    if (hasAll) {
       eligibleCrawlId = crawl.id;
       break;
     }
