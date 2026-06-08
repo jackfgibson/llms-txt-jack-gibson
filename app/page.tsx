@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/tooltip";
 
 const FEATURES: Array<{ label: string; href?: string }> = [
-  { label: "Respects robots.txt" },
   { label: "Spec-validated output", href: "https://llmstxt.org/#format" },
   { label: "Dynamic crawl configuration" },
 ];
@@ -37,7 +36,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [maxPagesInput, setMaxPagesInput] = useState("25");
+  const [maxPagesInput, setMaxPagesInput] = useState("20");
   const [maxDepthInput, setMaxDepthInput] = useState("3");
 
   async function handleSubmit(e: React.FormEvent) {

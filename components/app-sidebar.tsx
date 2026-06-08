@@ -13,6 +13,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { ModeToggle } from "@/components/mode-toggle";
 
 const NAV = [
   { label: "Generate", href: "/",        icon: HomeIcon },
@@ -26,15 +27,18 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader className="px-4 py-4">
-        <Link href="/" className="flex items-center gap-2.5">
-          <img
-            src="/logo.png"
-            alt="Crawl Atlas"
-            className="w-7 h-7 object-contain shrink-0"
-            style={{ imageRendering: "pixelated" }}
-          />
-          <span className="text-sm font-semibold tracking-tight">Crawl Atlas</span>
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2.5">
+            <img
+              src="/logo.png"
+              alt="Crawl Atlas"
+              className="w-7 h-7 object-contain shrink-0"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <span className="text-sm font-semibold tracking-tight">Crawl Atlas</span>
+          </Link>
+          <ModeToggle />
+        </div>
       </SidebarHeader>
 
       <SidebarContent>

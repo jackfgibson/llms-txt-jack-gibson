@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -34,8 +35,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${rubik.variable} h-full`}>
+    <html lang="en" className={`${rubik.variable} h-full`} suppressHydrationWarning>
       <body className="min-h-full font-[family-name:var(--font-rubik)]">
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <TooltipProvider>
           <SidebarProvider>
             <AppSidebar />
@@ -50,6 +52,7 @@ export default function RootLayout({
           </SidebarProvider>
         </TooltipProvider>
         <Toaster position="bottom-right" />
+        </ThemeProvider>
       </body>
     </html>
   );
