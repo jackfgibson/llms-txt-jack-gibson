@@ -89,7 +89,7 @@ const PROVIDER_META: Record<string, { logo: string; label: string }> = {
 const PROVIDER_MODEL: Record<string, string> = {
   anthropic: "Claude Haiku",
   openai:    "GPT-4o mini",
-  gemini:    "Gemini 2.0 Flash",
+  gemini:    "Gemini 3 Flash",
   fallback:  "Non-LLM",
 };
 

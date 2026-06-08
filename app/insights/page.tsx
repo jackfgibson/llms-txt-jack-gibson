@@ -14,7 +14,7 @@ import { Spinner } from "@/components/ui/spinner";
 const PROVIDER_META: Record<string, { logo: string; label: string }> = {
   anthropic: { logo: "/providers/claude.png",  label: "Claude Haiku" },
   openai:    { logo: "/providers/openai.png",   label: "GPT-4o mini" },
-  gemini:    { logo: "/providers/gemini.png",   label: "Gemini 2.0 Flash" },
+  gemini:    { logo: "/providers/gemini.png",   label: "Gemini 3 Flash" },
 };
 
 interface SiteGroup {
@@ -141,12 +141,19 @@ export default function InsightsPage() {
   const [triggering, setTriggering] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
 
-  // Load all sites
+  const LLM_PROVIDERS = ["anthropic", "openai", "gemini"];
+
+  // Load all sites, keeping only those whose latest completed crawl used all 3 LLM providers
   useEffect(() => {
     fetch("/api/crawls")
       .then((r) => r.json())
       .then((data: SiteGroup[]) => {
-        setSites(data);
+        const eligible = data.filter(
+          (s) =>
+            s.latest.status === "completed" &&
+            LLM_PROVIDERS.every((p) => s.latest.providers?.includes(p)),
+        );
+        setSites(eligible);
         setSitesLoading(false);
       })
       .catch(() => setSitesLoading(false));
@@ -213,7 +220,7 @@ export default function InsightsPage() {
               Loading sites…
             </div>
           ) : sites.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No crawls found. Submit a URL first.</p>
+            <p className="text-sm text-muted-foreground">No eligible sites found. Submit a URL with all 3 LLM providers selected.</p>
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors">
@@ -252,16 +259,22 @@ export default function InsightsPage() {
             )}
 
             {insight === null && (
-              <Button onClick={handleGenerate} disabled={triggering} className="gap-2">
-                {triggering && <Spinner className="size-4" />}
-                Generate Model Insights
-              </Button>
+              <div className="space-y-2">
+                <Button onClick={handleGenerate} disabled={triggering} className="gap-2">
+                  {triggering && <Spinner className="size-4" />}
+                  Generate Model Insights
+                </Button>
+                <p className="text-xs text-muted-foreground">This may take over a minute — the evaluation runs 18 LLM calls across all three providers.</p>
+              </div>
             )}
 
             {(insight?.status === "pending" || insight?.status === "running") && (
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <Spinner className="size-4" />
-                Evaluating models…
+              <div className="space-y-1">
+                <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                  <Spinner className="size-4" />
+                  Evaluating models…
+                </div>
+                <p className="text-xs text-muted-foreground">This may take over a minute.</p>
               </div>
             )}
 
