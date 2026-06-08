@@ -18,15 +18,16 @@ export async function callWithTool(
   prompt: string,
   tool: ToolSchema,
   provider?: LlmProvider,
+  maxTokens = 512,
 ): Promise<Record<string, unknown> | null> {
   if (provider === "anthropic") {
     return process.env.ANTHROPIC_API_KEY?.trim()
-      ? callAnthropic(prompt, tool)
+      ? callAnthropic(prompt, tool, maxTokens)
       : null;
   }
   if (provider === "openai") {
     return process.env.OPENAI_API_KEY?.trim()
-      ? callOpenAI(prompt, tool)
+      ? callOpenAI(prompt, tool, maxTokens)
       : null;
   }
   if (provider === "gemini") {
@@ -35,8 +36,8 @@ export async function callWithTool(
       : null;
   }
   // Auto-select: Anthropic → OpenAI → Gemini
-  if (process.env.ANTHROPIC_API_KEY?.trim()) return callAnthropic(prompt, tool);
-  if (process.env.OPENAI_API_KEY?.trim()) return callOpenAI(prompt, tool);
+  if (process.env.ANTHROPIC_API_KEY?.trim()) return callAnthropic(prompt, tool, maxTokens);
+  if (process.env.OPENAI_API_KEY?.trim()) return callOpenAI(prompt, tool, maxTokens);
   if (process.env.GOOGLE_API_KEY?.trim()) return callGemini(prompt, tool);
   return null;
 }
@@ -46,13 +47,14 @@ export async function callWithTool(
 async function callAnthropic(
   prompt: string,
   tool: ToolSchema,
+  maxTokens = 512,
 ): Promise<Record<string, unknown> | null> {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 512,
+    max_tokens: maxTokens,
     tools: [
       {
         name: tool.name,
@@ -78,12 +80,14 @@ async function callAnthropic(
 async function callOpenAI(
   prompt: string,
   tool: ToolSchema,
+  maxTokens = 512,
 ): Promise<Record<string, unknown> | null> {
   const { default: OpenAI } = await import("openai");
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
+    max_tokens: maxTokens,
     messages: [{ role: "user", content: prompt }],
     tools: [
       {

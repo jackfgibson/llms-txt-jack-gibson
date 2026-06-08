@@ -34,6 +34,7 @@ Score the given answer on a scale of 0.0 to 2.5 (one decimal place):
       },
       required: ["score", "reasoning"],
     },
+    "openai",
   );
 
   if (!result) return null;

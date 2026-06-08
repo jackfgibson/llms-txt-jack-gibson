@@ -67,6 +67,7 @@ Use the tool to submit your 4 answers and your structure pick.`;
       required: ["answer_1", "answer_2", "answer_3", "answer_4", "structure_winner"],
     },
     evaluatingProvider,
+    1024,
   );
 
   if (!result) return null;

@@ -67,7 +67,7 @@ export const runInsights = inngest.createFunction(
           missing.map(async (provider) => {
             const gen = generationRows.find((g) => g.provider === provider)!;
             const pairs = await generateQuestionsForModel(gen.content, provider);
-            if (!pairs) return;
+            if (!pairs) throw new Error(`Failed to generate questions for provider: ${provider}`);
             await db
               .insert(schema.modelQuestions)
               .values({
@@ -82,10 +82,18 @@ export const runInsights = inngest.createFunction(
         );
       }
 
-      return db
+      const rows = await db
         .select()
         .from(schema.modelQuestions)
         .where(eq(schema.modelQuestions.crawlId, crawlId));
+
+      for (const p of providers) {
+        if (!rows.some((r) => r.provider === p)) {
+          throw new Error(`Questions missing for provider after generation attempt: ${p}`);
+        }
+      }
+
+      return rows;
     });
 
     // ── Step 4: each model evaluates the other two's questions + ranks structure ─
@@ -119,6 +127,8 @@ export const runInsights = inngest.createFunction(
             evaluatingProvider: provider,
           });
 
+          if (!result) throw new Error(`evaluateModel returned null for provider: ${provider}`);
+
           return { provider, result };
         }),
       );
@@ -134,7 +144,6 @@ export const runInsights = inngest.createFunction(
 
       const graded = await Promise.all(
         evalResults.map(async ({ provider, result }) => {
-          if (!result) return { provider, scoredAnswers: [], structurePick: "" };
 
           const questionSets = providers
             .filter((p) => p !== provider)
