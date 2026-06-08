@@ -36,6 +36,13 @@
       "when": 1780866322889,
       "tag": "0004_ancient_magma",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780888499000,
+      "tag": "0005_bouncy_devos",
+      "breakpoints": true
     }
   ]
 }

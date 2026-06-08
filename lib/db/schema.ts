@@ -9,6 +9,7 @@ import {
   jsonb,
   timestamp,
   index,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -146,3 +147,49 @@ export const pageDescriptions = pgTable("page_descriptions", {
   provenance: text("provenance"), // source snippet the description was grounded in
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// ---- Model Insights tables --------------------------------------------------
+
+type QAPair = { question: string; correctAnswer: string };
+
+export const modelQuestions = pgTable("model_questions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull().references(() => sites.id, { onDelete: "cascade" }),
+  crawlId: uuid("crawl_id").notNull().references(() => crawls.id, { onDelete: "cascade" }),
+  generationId: uuid("generation_id").notNull().references(() => generations.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(), // 'anthropic' | 'openai' | 'gemini'
+  questions: jsonb("questions").notNull().$type<QAPair[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("model_questions_generation_uq").on(t.generationId)]);
+
+export const insights = pgTable("insights", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull().references(() => sites.id, { onDelete: "cascade" }),
+  crawlId: uuid("crawl_id").notNull().references(() => crawls.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"), // 'pending' | 'running' | 'completed' | 'failed'
+  winner: text("winner"), // winning provider, null until completed
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+}, (t) => [unique("insights_site_crawl_uq").on(t.siteId, t.crawlId)]);
+
+type EvalDetail = {
+  questionsAnswered: Array<{
+    question: string;
+    correctAnswer: string;
+    givenAnswer: string;
+    score: number;
+    reasoning: string;
+  }>;
+  structurePick: string;
+};
+
+export const modelEvalResults = pgTable("model_eval_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  insightId: uuid("insight_id").notNull().references(() => insights.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(), // 'anthropic' | 'openai' | 'gemini'
+  accuracy: real("accuracy").notNull(), // 0.0–10.0
+  structurePlacement: text("structure_placement").notNull(), // 'Excellent' | 'Great' | 'Good'
+  finalScore: real("final_score").notNull(), // accuracy + boost
+  details: jsonb("details").notNull().$type<EvalDetail>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("model_eval_results_insight_provider_uq").on(t.insightId, t.provider)]);

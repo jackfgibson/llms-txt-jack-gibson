@@ -180,6 +180,7 @@ export default function CrawlPage({
   const [crawl, setCrawl] = useState<Crawl | null>(null);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
   const [changeEvent, setChangeEvent] = useState<ChangeEvent | null | undefined>(undefined);
+  const [insightWinner, setInsightWinner] = useState<string | null>(null);
   const [rechecking, setRechecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -213,6 +214,14 @@ export default function CrawlPage({
             setChangeEvent(ev ?? null);
           } else {
             setChangeEvent(null);
+          }
+          // Fetch insights to show crown on winning model tab
+          const insightRes = await fetch(`/api/sites/${data.siteId}/insights`);
+          if (insightRes.ok) {
+            const insight = await insightRes.json();
+            if (insight?.status === "completed" && insight?.crawlId === crawlId && insight?.winner) {
+              setInsightWinner(insight.winner);
+            }
           }
           return;
         }
@@ -471,6 +480,7 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                         className="w-6 h-6 object-contain"
                         style={{ imageRendering: "pixelated" }}
                       />
+                      {insightWinner === g.provider && <span>👑</span>}
                       {meta.label}
                     </TabsTrigger>
                   );

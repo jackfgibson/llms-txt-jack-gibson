@@ -89,6 +89,52 @@ export const ErrorSchema = registry.register(
   }),
 );
 
+// ── Insights schemas ─────────────────────────────────────────────────────────
+
+export const ModelEvalResultSchema = registry.register(
+  "ModelEvalResult",
+  z.object({
+    id: z.string().uuid(),
+    insightId: z.string().uuid(),
+    provider: z.string().openapi({ description: "'anthropic' | 'openai' | 'gemini'" }),
+    accuracy: z.number().openapi({ description: "Sum of 4 answer scores (0.0–10.0)" }),
+    structurePlacement: z.enum(["Excellent", "Great", "Good"]),
+    finalScore: z.number().openapi({ description: "accuracy + structure boost" }),
+    details: z.object({
+      questionsAnswered: z.array(
+        z.object({
+          question: z.string(),
+          correctAnswer: z.string(),
+          givenAnswer: z.string(),
+          score: z.number(),
+          reasoning: z.string(),
+        }),
+      ),
+      structurePick: z.string(),
+    }),
+    createdAt: z.string().datetime(),
+  }),
+);
+
+export const InsightResultSchema = registry.register(
+  "InsightResult",
+  z.object({
+    id: z.string().uuid(),
+    siteId: z.string().uuid(),
+    crawlId: z.string().uuid(),
+    status: z.enum(["pending", "running", "completed", "failed"]),
+    winner: z.string().nullable(),
+    createdAt: z.string().datetime(),
+    finishedAt: z.string().datetime().nullable(),
+    evalResults: z.array(ModelEvalResultSchema),
+  }),
+);
+
+export const GetInsightsResponseSchema = registry.register(
+  "GetInsightsResponse",
+  InsightResultSchema.nullable(),
+);
+
 // ── Route registrations ──────────────────────────────────────────────────────
 
 registry.registerPath({
@@ -136,6 +182,34 @@ registry.registerPath({
   responses: {
     200: { description: "Crawl details", content: { "application/json": { schema: CrawlSchema } } },
     404: { description: "Crawl not found", content: { "application/json": { schema: ErrorSchema } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/sites/{id}/insights",
+  summary: "Get the latest model insights for a site",
+  tags: ["Insights"],
+  request: { params: z.object({ id: z.string().uuid() }) },
+  responses: {
+    200: {
+      description: "Latest insights (null if none exist)",
+      content: { "application/json": { schema: GetInsightsResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/sites/{id}/insights",
+  summary: "Trigger model insights evaluation for a site",
+  tags: ["Insights"],
+  request: { params: z.object({ id: z.string().uuid() }) },
+  responses: {
+    200: { description: "Existing completed insights returned", content: { "application/json": { schema: InsightResultSchema } } },
+    202: { description: "Evaluation triggered or already in flight", content: { "application/json": { schema: InsightResultSchema } } },
+    404: { description: "Site not found", content: { "application/json": { schema: ErrorSchema } } },
+    422: { description: "No eligible crawl (need all 3 LLM providers)", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 

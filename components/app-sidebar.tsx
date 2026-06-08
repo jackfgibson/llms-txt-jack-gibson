@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { HomeIcon, ListIcon, HelpCircleIcon } from "lucide-react";
+import { HomeIcon, ListIcon, SparklesIcon, HelpCircleIcon } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -18,6 +18,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 const NAV = [
   { label: "Generate", href: "/",        icon: HomeIcon },
   { label: "Results",  href: "/results",  icon: ListIcon },
+  { label: "Insights", href: "/insights", icon: SparklesIcon },
   { label: "Why?",     href: "/why",      icon: HelpCircleIcon },
 ];
 
