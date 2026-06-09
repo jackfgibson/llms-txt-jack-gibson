@@ -68,6 +68,61 @@ export interface FetchOptions {
   crawlSignal?: AbortSignal;
 }
 
+// ── Body reading with hard deadline ──────────────────────────────────────────
+//
+// Node.js undici applies an AbortSignal to the *request* phase. Once safeFetch
+// returns a Response (headers received), the signal is no longer reliably wired
+// to body streaming — res.text() can hang indefinitely even after the signal
+// fires. This helper wraps body reading in an explicit Promise.race so the
+// per-request timeout and crawl-level budget both apply to TTLB, not just TTFB.
+function readBodyWithTimeout(
+  res: Response,
+  timeoutMs: number,
+  crawlSignal?: AbortSignal,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let abortHandler: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      if (abortHandler && crawlSignal) {
+        crawlSignal.removeEventListener("abort", abortHandler);
+        abortHandler = null;
+      }
+    };
+
+    const fail = (err: Error) => {
+      cleanup();
+      res.body?.cancel().catch(() => {});
+      reject(err);
+    };
+
+    // Hard wall — fires if body read takes longer than the per-request budget.
+    timer = setTimeout(
+      () => fail(Object.assign(new Error("body read timed out"), { name: "TimeoutError" })),
+      timeoutMs,
+    );
+
+    // Immediate check in case crawlSignal already fired before we got here.
+    if (crawlSignal?.aborted) {
+      fail(Object.assign(new Error("crawl aborted"), { name: "AbortError" }));
+      return;
+    }
+
+    if (crawlSignal) {
+      abortHandler = () =>
+        fail(Object.assign(new Error("crawl aborted"), { name: "AbortError" }));
+      crawlSignal.addEventListener("abort", abortHandler, { once: true });
+    }
+
+    res.text().then(
+      (text) => { cleanup(); resolve(text); },
+      (err: unknown) => { cleanup(); reject(err); },
+    );
+  });
+}
+
 export async function fetchPage(
   url: string,
   opts: FetchOptions = {},
@@ -86,15 +141,22 @@ export async function fetchPage(
     if (opts.crawlSignal?.aborted) throw new Error("crawl deadline exceeded");
 
     // Combine the per-request timeout with the crawl-level deadline so whichever
-    // fires first aborts the fetch. AbortSignal.any requires Node 20+, which is
-    // the Vercel default for modern Next.js.
+    // fires first aborts the fetch. AbortSignal.any requires Node 20.3+.
     const signal = opts.crawlSignal
       ? AbortSignal.any([AbortSignal.timeout(timeoutMs), opts.crawlSignal])
       : AbortSignal.timeout(timeoutMs);
 
     try {
       const res = await safeFetch(url, { headers: { "User-Agent": ua }, signal }, MAX_REDIRECTS);
-      const body = await res.text();
+
+      // Bail out immediately if the crawl budget fired while safeFetch was running
+      // (e.g. during a DNS re-check on a redirect hop, which doesn't take the signal).
+      if (opts.crawlSignal?.aborted) {
+        res.body?.cancel().catch(() => {});
+        throw Object.assign(new Error("crawl aborted"), { name: "AbortError" });
+      }
+
+      const body = await readBodyWithTimeout(res, timeoutMs, opts.crawlSignal);
       const finalUrl = res.url || url;
       bodyCache.set(key, { body, status: res.status, finalUrl, at: Date.now() });
       return { body, status: res.status, finalUrl };
