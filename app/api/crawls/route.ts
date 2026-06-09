@@ -19,11 +19,12 @@ export interface SiteGroup {
   faviconUrl: string | null;
   latest: CrawlRun;
   previousRuns: CrawlRun[];
+  hasInsights: boolean;
 }
 
 export async function GET() {
-  const rows = await db
-    .select({
+  const [rows, insightRows] = await Promise.all([
+    db.select({
       crawlId: schema.crawls.id,
       status: schema.crawls.status,
       providers: schema.crawls.providers,
@@ -34,10 +35,14 @@ export async function GET() {
       slug: schema.sites.slug,
       faviconUrl: schema.sites.faviconUrl,
     })
-    .from(schema.crawls)
-    .innerJoin(schema.sites, eq(schema.crawls.siteId, schema.sites.id))
-    .orderBy(desc(schema.crawls.createdAt))
-    .limit(200);
+      .from(schema.crawls)
+      .innerJoin(schema.sites, eq(schema.crawls.siteId, schema.sites.id))
+      .orderBy(desc(schema.crawls.createdAt))
+      .limit(200),
+    db.selectDistinct({ siteId: schema.insights.siteId }).from(schema.insights),
+  ]);
+
+  const insightSiteIds = new Set(insightRows.map((r) => r.siteId));
 
   // Group by site; rows are already newest-first so first per site = latest
   const siteMap = new Map<string, SiteGroup>();
@@ -59,6 +64,7 @@ export async function GET() {
         faviconUrl: r.faviconUrl ?? null,
         latest: run,
         previousRuns: [],
+        hasInsights: insightSiteIds.has(r.siteId),
       });
     } else {
       siteMap.get(r.siteId)!.previousRuns.push(run);

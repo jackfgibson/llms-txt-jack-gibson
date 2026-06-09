@@ -33,6 +33,7 @@ interface SiteGroup {
   slug: string;
   faviconUrl: string | null;
   latest: { crawlId: string; status: string; providers: string[] };
+  hasInsights: boolean;
 }
 
 interface QADetail {
@@ -211,8 +212,9 @@ function InsightsPageInner() {
       .then((data: SiteGroup[]) => {
         const eligible = data.filter(
           (s) =>
-            s.latest.status === "completed" &&
-            LLM_PROVIDERS.every((p) => s.latest.providers?.includes(p)),
+            s.hasInsights ||
+            (s.latest.status === "completed" &&
+              LLM_PROVIDERS.every((p) => s.latest.providers?.includes(p))),
         );
         setSites(eligible);
         setSitesLoading(false);
@@ -282,12 +284,18 @@ function InsightsPageInner() {
 
   const selectedSite = sites.find((s) => s.siteId === selectedSiteId);
   const hostname = selectedSite?.hostname ?? "site";
-  // Show "Generate for Most Recent Crawl" only when the latest eligible crawl has no insight yet
+  // Site is eligible for new insight generation if its latest crawl used all 3 providers
+  const isSelectedSiteEligible =
+    selectedSite != null &&
+    selectedSite.latest.status === "completed" &&
+    LLM_PROVIDERS.every((p) => selectedSite.latest.providers?.includes(p));
+
+  // Show "Generate for Most Recent Crawl" only when eligible AND the latest crawl has no insight yet
   const hasNewerCrawl =
+    isSelectedSiteEligible &&
     insights !== undefined &&
     insights.length > 0 &&
-    selectedSite != null &&
-    insights[0].crawlId !== selectedSite.latest.crawlId;
+    insights[0].crawlId !== selectedSite!.latest.crawlId;
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-10 min-h-screen">
@@ -385,8 +393,8 @@ function InsightsPageInner() {
               </div>
             )}
 
-            {/* No insights yet */}
-            {insights?.length === 0 && (
+            {/* No insights yet — only show generate button if the site is eligible */}
+            {insights?.length === 0 && isSelectedSiteEligible && (
               <div className="space-y-2">
                 <Button onClick={handleGenerate} disabled={triggering} className="gap-2">
                   {triggering && <Spinner className="size-4" />}

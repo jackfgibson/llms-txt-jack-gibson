@@ -483,33 +483,34 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 </DropdownMenu>
               )}
 
-              {isInsightsEligible && (
-                insightStatus === "none" || insightStatus === "failed"
-                  ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleGenerateInsights}
-                      disabled={generatingInsights}
-                      className="gap-1.5"
-                    >
-                      {generatingInsights ? <Spinner className="size-3.5" /> : <SparklesIcon className="size-3.5" />}
-                      Generate Insights
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => router.push(`/insights?siteId=${crawl.siteId}`)}
-                      className="gap-1.5"
-                    >
-                      {(insightStatus === "pending" || insightStatus === "running")
-                        ? <Spinner className="size-3.5" />
-                        : <TelescopeIcon className="size-3.5" />
-                      }
-                      {insightStatus === "completed" ? "View Insights" : "Insights Running…"}
-                    </Button>
-                  )
+              {/* Generate: only on the most recent eligible crawl with no existing insights */}
+              {isInsightsEligible && isLatestCrawl && (insightStatus === "none" || insightStatus === "failed") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleGenerateInsights}
+                  disabled={generatingInsights}
+                  className="gap-1.5"
+                >
+                  {generatingInsights ? <Spinner className="size-3.5" /> : <SparklesIcon className="size-3.5" />}
+                  Generate Insights
+                </Button>
+              )}
+
+              {/* View/Running: whenever this crawl has associated insights, regardless of age */}
+              {(insightStatus === "completed" || insightStatus === "pending" || insightStatus === "running") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => router.push(`/insights?siteId=${crawl.siteId}`)}
+                  className="gap-1.5"
+                >
+                  {(insightStatus === "pending" || insightStatus === "running")
+                    ? <Spinner className="size-3.5" />
+                    : <TelescopeIcon className="size-3.5" />
+                  }
+                  {insightStatus === "completed" ? "View Insights" : "Insights Running…"}
+                </Button>
               )}
 
               <Button
