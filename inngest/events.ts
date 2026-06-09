@@ -5,6 +5,7 @@ export const crawlRequested = eventType("site/crawl.requested", {
     siteId: string;
     crawlId: string;
     url: string;
+    automated?: boolean; // true for scheduled cron recrawls; used for concurrency keying
     // Optional: recrawls (manual + scheduled) omit these and the pipeline carries
     // them over from the site's previous crawl.
     providers?: string[]; // ["anthropic", "openai", "fallback"]

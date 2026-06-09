@@ -284,7 +284,7 @@ export default function ResultsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Results</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            All generations, newest first. Click a card to see run history and generated files. Some sites may take a minute or longer to crawl.
+            All generations, newest first. Click a card to see run history and generated files. Some sites may take a minute or so to crawl.
           </p>
         </div>
 

@@ -305,7 +305,7 @@ export default function CrawlPage({
       addPendingInsight({ type: "insight", siteId: crawl.siteId, hostname: hostname ?? "site" });
       const siteId = crawl.siteId;
       toast("Insights generation started!", {
-        description: "This may take a minute or two.",
+        description: "This may take up to 30 seconds.",
         action: {
           label: "View progress →",
           onClick: () => router.push(`/insights?siteId=${siteId}`),

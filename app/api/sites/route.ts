@@ -70,8 +70,9 @@ export async function POST(req: NextRequest) {
 
     if (Number(count) > 0) slug = `${slug}-${count}`;
 
-    // Set a daily schedule so the monitoring cron picks up this site automatically.
-    [site] = await db.insert(schema.sites).values({ url: origin, slug, scheduleCron: "0 3 * * *" }).returning();
+    // scheduleCron is intentionally left null — it is set by crawlSite only after
+    // the first successful generation, so bad/unreachable sites never enter the cron.
+    [site] = await db.insert(schema.sites).values({ url: origin, slug }).returning();
   }
 
   // Create a new pending crawl — store maxPages/maxDepth immediately so the UI can show them.

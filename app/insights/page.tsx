@@ -6,6 +6,7 @@ import { removePendingInsight } from "@/lib/pending-jobs";
 import { toast } from "sonner";
 import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import { FaviconImg } from "@/components/favicon-img";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -67,6 +68,13 @@ const PROVIDER_FILENAME: Record<string, string> = {
   openai:    "chatgpt",
   gemini:    "gemini",
   fallback:  "deterministic",
+};
+
+const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  pending:   "secondary",
+  running:   "secondary",
+  completed: "outline",
+  failed:    "destructive",
 };
 
 const PLACEMENT_COLOR: Record<string, string> = {
@@ -384,7 +392,7 @@ function InsightsPageInner() {
                   {triggering && <Spinner className="size-4" />}
                   Generate Model Insights
                 </Button>
-                <p className="text-xs text-muted-foreground">This may take a minute or two to complete.</p>
+                <p className="text-xs text-muted-foreground">This may take up to 30 seconds to complete.</p>
               </div>
             )}
 
@@ -397,7 +405,7 @@ function InsightsPageInner() {
                       <Spinner className="size-4" />
                       Evaluating models…
                     </div>
-                    <p className="text-xs text-muted-foreground">This may take over a minute.</p>
+                    <p className="text-xs text-muted-foreground">This may take up to 30 seconds.</p>
                   </div>
                 )}
 
@@ -508,7 +516,12 @@ function InsightsPageInner() {
                                 )}
                               </span>
                             ) : (
-                              <span className="shrink-0 italic">{ins.status}</span>
+                              <Badge
+                                variant={STATUS_VARIANT[ins.status] ?? "secondary"}
+                                className="shrink-0 text-[10px]"
+                              >
+                                {ins.status}
+                              </Badge>
                             )}
                           </button>
                         );
