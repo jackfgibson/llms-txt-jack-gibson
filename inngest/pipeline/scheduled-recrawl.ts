@@ -41,6 +41,7 @@ export const scheduledRecrawl = inngest.createFunction(
               siteId: c.siteId,
               crawlId: c.id,
               url: site.url,
+              automated: true,
             },
           };
         }),

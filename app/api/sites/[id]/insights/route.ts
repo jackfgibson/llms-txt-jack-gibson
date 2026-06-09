@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { inngest } from "@/inngest/client";
 import { insightsRequested } from "@/inngest/events";
@@ -7,21 +7,49 @@ import { insightsRequested } from "@/inngest/events";
 export const runtime = "nodejs";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
+  const { searchParams } = new URL(req.url);
+  const crawlId = searchParams.get("crawlId");
+  const all = searchParams.get("all") === "true";
+
+  if (all) {
+    const allInsights = await db
+      .select()
+      .from(schema.insights)
+      .where(eq(schema.insights.siteId, id))
+      .orderBy(desc(schema.insights.createdAt));
+
+    if (allInsights.length === 0) return NextResponse.json([], { status: 200 });
+
+    const allEvalResults = await db
+      .select()
+      .from(schema.modelEvalResults)
+      .where(inArray(schema.modelEvalResults.insightId, allInsights.map((i) => i.id)));
+
+    return NextResponse.json(
+      allInsights.map((insight) => ({
+        ...insight,
+        evalResults: allEvalResults.filter((r) => r.insightId === insight.id),
+      })),
+      { status: 200 },
+    );
+  }
+
+  const whereClause = crawlId
+    ? and(eq(schema.insights.siteId, id), eq(schema.insights.crawlId, crawlId))
+    : eq(schema.insights.siteId, id);
 
   const [insight] = await db
     .select()
     .from(schema.insights)
-    .where(eq(schema.insights.siteId, id))
+    .where(whereClause)
     .orderBy(desc(schema.insights.createdAt))
     .limit(1);
 
-  if (!insight) {
-    return NextResponse.json(null, { status: 200 });
-  }
+  if (!insight) return NextResponse.json(null, { status: 200 });
 
   const evalResults = await db
     .select()

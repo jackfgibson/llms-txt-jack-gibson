@@ -1,4 +1,4 @@
-import { and, eq, ne, sql, desc, isNotNull } from "drizzle-orm";
+import { and, eq, ne, sql, desc, isNotNull, isNull } from "drizzle-orm";
 import { inngest } from "../client";
 import { crawlRequested, crawlCompleted } from "../events";
 import { db, schema } from "@/lib/db";
@@ -8,6 +8,12 @@ export const crawlSite = inngest.createFunction(
     id: "crawl-site",
     triggers: [{ event: crawlRequested }],
     retries: 3,
+    // Automated (cron) recrawls all share one queue slot so they run serially.
+    // Manual crawls each get a unique key and are unaffected by this limit.
+    concurrency: {
+      limit: 1,
+      key: `event.data.automated == true ? "automated-queue" : event.data.crawlId`,
+    },
     onFailure: async ({ error, event }) => {
       const { crawlId } = event.data.event.data as { crawlId: string };
       await db
@@ -359,6 +365,13 @@ export const crawlSite = inngest.createFunction(
           .update(schema.crawls)
           .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
           .where(eq(schema.crawls.id, crawlId));
+
+        // Enroll in the daily cron on first successful generation — idempotent,
+        // so retries and future recrawls are safe.
+        await db
+          .update(schema.sites)
+          .set({ scheduleCron: "0 3 * * *" })
+          .where(and(eq(schema.sites.id, siteId), isNull(schema.sites.scheduleCron)));
 
         return { generationIds: inserted.map((g) => g.id), version };
       });
