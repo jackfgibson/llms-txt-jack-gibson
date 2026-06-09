@@ -34,12 +34,12 @@ export function JobPoller() {
                   label: "View",
                   onClick: () => router.push(`/crawls/${crawlId}`),
                 },
-                duration: 12000,
+                duration: 8000,
               });
             } else if (data.status === "failed") {
               removePendingCrawl(job.crawlId);
               toast.error(`Generation failed for ${job.hostname}`, {
-                duration: 8000,
+                duration: 6000,
               });
             }
           } catch {
@@ -60,7 +60,7 @@ export function JobPoller() {
                   label: "View",
                   onClick: () => router.push(`/insights?siteId=${siteId}`),
                 },
-                duration: 12000,
+                duration: 8000,
               });
             } else if (data.status === "failed") {
               removePendingInsight(job.siteId);

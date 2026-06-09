@@ -275,18 +275,18 @@ export default function CrawlPage({
     try {
       const res = await fetch(`/api/sites/${crawl.siteId}/crawl`, { method: "POST" });
       if (!res.ok) {
-        toast.error("Re-check failed", { description: "Could not start a new crawl." });
+        toast.error("Re-check failed", { description: "Could not start a new crawl.", duration: 8000 });
         return;
       }
       const { crawlId: newId } = await res.json();
       addPendingCrawl({ type: "crawl", crawlId: newId, siteId: crawl.siteId, hostname: hostname ?? "site" });
       toast("Re-check started!", {
         description: "A new crawl is running. Redirecting…",
-        duration: 4000,
+        duration: 5000,
       });
       router.push(`/crawls/${newId}`);
     } catch {
-      toast.error("Network error — please try again");
+      toast.error("Network error — please try again", { duration: 5000 });
     } finally {
       setRechecking(false);
     }
@@ -298,22 +298,22 @@ export default function CrawlPage({
     try {
       const res = await fetch(`/api/sites/${crawl.siteId}/insights`, { method: "POST" });
       if (!res.ok) {
-        toast.error("Could not trigger insights — please try again");
+        toast.error("Could not trigger insights — please try again", { duration: 5000 });
         return;
       }
       setInsightStatus("pending");
       addPendingInsight({ type: "insight", siteId: crawl.siteId, hostname: hostname ?? "site" });
       const siteId = crawl.siteId;
       toast("Insights generation started!", {
-        description: "This may take a minute or two — 18 LLM calls across all 3 providers.",
+        description: "This may take a minute or two.",
         action: {
           label: "View progress →",
           onClick: () => router.push(`/insights?siteId=${siteId}`),
         },
-        duration: 12000,
+        duration: 6000,
       });
     } catch {
-      toast.error("Network error — please try again");
+      toast.error("Network error — please try again", { duration: 5000 });
     } finally {
       setGeneratingInsights(false);
     }
@@ -416,7 +416,15 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
             {hostname ? (
               <div className="flex items-center gap-2">
                 <FaviconImg src={siteData?.site.faviconUrl ?? null} size="md" />
-                <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
+                <a
+                  href={site?.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-center gap-1.5 hover:underline"
+                >
+                  <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
+                  <ExternalLinkIcon className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                </a>
               </div>
             ) : (
               <div className="h-7 w-48 rounded-md bg-muted animate-pulse" />
@@ -545,7 +553,7 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
         {crawl?.status === "failed" && (
           <div className="rounded-xl border border-border p-6">
             <p className="text-sm text-destructive">
-              The crawl failed. Check that the URL is reachable and try again.
+              The crawl failed. The site is either unreachable, or is blocking our crawlers.
             </p>
           </div>
         )}

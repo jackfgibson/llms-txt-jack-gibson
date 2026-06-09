@@ -104,7 +104,7 @@ export default function Home() {
           label: "View results →",
           onClick: () => router.push("/results"),
         },
-        duration: 8000,
+        duration: 6000,
       });
     } catch {
       setError("Network error — please try again");
