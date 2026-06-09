@@ -227,14 +227,19 @@ export const runInsights = inngest.createFunction(
       const placements = ["Excellent", "Great", "Good"] as const;
       const placementMap = Object.fromEntries(ranked.map((p, i) => [p, placements[i]]));
 
-      const finalScores = providers.map((p) => ({
-        provider: p,
-        accuracy: accuracyMap[p],
-        structurePlacement: placementMap[p],
-        finalScore: Math.min(10.0, round1dp(accuracyMap[p] + STRUCTURE_BOOST[placementMap[p]])),
-      }));
+      const finalScores = providers.map((p) => {
+        // Rank on the uncapped score so a 10.0 tie is broken by structure boost
+        const rawScore = round1dp(accuracyMap[p] + STRUCTURE_BOOST[placementMap[p]]);
+        return {
+          provider: p,
+          accuracy: accuracyMap[p],
+          structurePlacement: placementMap[p],
+          rawScore,
+          finalScore: Math.min(10.0, rawScore),
+        };
+      });
 
-      const topProvider = finalScores.sort((a, b) => b.finalScore - a.finalScore)[0].provider;
+      const topProvider = finalScores.sort((a, b) => b.rawScore - a.rawScore)[0].provider;
 
       // Insert eval results (idempotent via unique index)
       await db

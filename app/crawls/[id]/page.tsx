@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { use } from "react";
+import ReactMarkdown from "react-markdown";
 import { useRouter } from "next/navigation";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon, SparklesIcon, TelescopeIcon } from "lucide-react";
 import { FaviconImg } from "@/components/favicon-img";
@@ -20,6 +21,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Progress,
@@ -115,6 +118,7 @@ function GenerationPanel({
   isLatest: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [view, setView] = useState<"raw" | "markdown">("raw");
 
   function copy() {
     navigator.clipboard.writeText(generation.content);
@@ -137,12 +141,31 @@ function GenerationPanel({
       {/* Content */}
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40">
-          <span className="text-xs font-mono text-muted-foreground">
-            llms.txt
-            {!isLatest && (
-              <span className="ml-2 text-amber-600 dark:text-amber-400">(historical — not the live version)</span>
-            )}
-          </span>
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-mono text-muted-foreground">
+              llms.txt
+              {!isLatest && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400">(historical — not the live version)</span>
+              )}
+            </span>
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              spacing={0}
+              value={[view]}
+              onValueChange={(value: string[]) => {
+                if (value.length > 0) setView(value[0] as "raw" | "markdown");
+              }}
+              aria-label="View mode"
+            >
+              <ToggleGroupItem value="raw" className="h-6 px-2 text-[10px]">
+                RAW
+              </ToggleGroupItem>
+              <ToggleGroupItem value="markdown" className="h-6 px-2 text-[10px]">
+                MARKDOWN
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
           <div className="flex items-center gap-1.5">
             <Button size="sm" variant="ghost" onClick={copy} className="h-7 gap-1.5 text-xs">
               {copied ? (
@@ -168,9 +191,15 @@ function GenerationPanel({
             )}
           </div>
         </div>
-        <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed p-5 overflow-auto max-h-[60vh] bg-background">
-          {generation.content}
-        </pre>
+        {view === "markdown" ? (
+          <div className="prose prose-sm dark:prose-invert max-w-none p-5 overflow-auto max-h-[60vh] bg-background">
+            <ReactMarkdown>{generation.content}</ReactMarkdown>
+          </div>
+        ) : (
+          <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed p-5 overflow-auto max-h-[60vh] bg-background">
+            {generation.content}
+          </pre>
+        )}
       </div>
     </div>
   );
@@ -188,9 +217,13 @@ export default function CrawlPage({
   const [changeEvent, setChangeEvent] = useState<ChangeEvent | null | undefined>(undefined);
   type InsightStatus = "none" | "pending" | "running" | "completed" | "failed";
   const [insightStatus, setInsightStatus] = useState<InsightStatus>("none");
-  const [rechecking, setRechecking] = useState(false);
+  const [recrawling, setRecrawling] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [generatingInsights, setGeneratingInsights] = useState(false);
+  // Track status across polls so we only toast on a watched run→finished transition,
+  // not when opening an already-finished crawl.
+  const prevStatusRef = useRef<Crawl["status"] | null>(null);
+  const hostnameRef = useRef<string | null>(null);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -201,6 +234,11 @@ export default function CrawlPage({
         const res = await fetch(`/api/crawls/${crawlId}`);
         if (!res.ok) return;
         const data: Crawl = await res.json();
+        const wasRunning =
+          prevStatusRef.current === "pending" ||
+          prevStatusRef.current === "crawling" ||
+          prevStatusRef.current === "generating";
+        prevStatusRef.current = data.status;
         setCrawl(data);
 
         // Fetch site data on the first poll so history is visible immediately,
@@ -208,7 +246,11 @@ export default function CrawlPage({
         if (!siteDataLoaded) {
           siteDataLoaded = true;
           const siteRes = await fetch(`/api/sites/${data.siteId}`);
-          if (siteRes.ok) setSiteData(await siteRes.json());
+          if (siteRes.ok) {
+            const sd: SiteData = await siteRes.json();
+            setSiteData(sd);
+            hostnameRef.current = new URL(sd.site.url).hostname.replace(/^www\./, "");
+          }
         }
 
         if (data.status === "completed" || data.status === "failed") {
@@ -216,7 +258,25 @@ export default function CrawlPage({
           removePendingCrawl(crawlId);
           // Re-fetch site data on completion to pick up new generation
           const siteRes = await fetch(`/api/sites/${data.siteId}`);
-          if (siteRes.ok) setSiteData(await siteRes.json());
+          if (siteRes.ok) {
+            const sd: SiteData = await siteRes.json();
+            setSiteData(sd);
+            hostnameRef.current = new URL(sd.site.url).hostname.replace(/^www\./, "");
+          }
+          // Toast only when this page watched the crawl run to completion.
+          // id matches the JobPoller toast so the two can never double-fire.
+          if (wasRunning && data.status === "completed") {
+            toast.success(`llms.txt ready for ${hostnameRef.current ?? "site"}`, {
+              id: `crawl-${crawlId}`,
+              description: "Generation is complete.",
+              duration: 8000,
+            });
+          } else if (wasRunning && data.status === "failed") {
+            toast.error(`Generation failed for ${hostnameRef.current ?? "site"}`, {
+              id: `crawl-${crawlId}`,
+              duration: 6000,
+            });
+          }
           // Fetch change_event for this crawl
           const evRes = await fetch(`/api/crawls/${crawlId}/change-event`);
           if (evRes.ok) {
@@ -264,23 +324,43 @@ export default function CrawlPage({
       setInsightStatus(insight.status as InsightStatus);
       if (insight.status === "completed" || insight.status === "failed") {
         removePendingInsight(crawl.siteId);
+        // This effect only runs while we watch a pending/running insight, so this
+        // is a genuine transition. id matches the JobPoller toast to avoid doubles.
+        const siteId = crawl.siteId;
+        if (insight.status === "completed") {
+          toast.success(`Insights ready for ${hostname ?? "site"}`, {
+            id: `insight-${siteId}`,
+            description: "Model comparison is complete.",
+            action: {
+              label: "View",
+              onClick: () => router.push(`/insights?siteId=${siteId}`),
+            },
+            duration: 8000,
+          });
+        } else {
+          toast.error(`Insights failed for ${hostname ?? "site"}`, {
+            id: `insight-${siteId}`,
+            duration: 8000,
+          });
+        }
       }
     }, 3000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crawl?.siteId, crawlId, insightStatus]);
 
-  async function handleRecheck() {
+  async function handleRecrawl() {
     if (!crawl || !siteData) return;
-    setRechecking(true);
+    setRecrawling(true);
     try {
       const res = await fetch(`/api/sites/${crawl.siteId}/crawl`, { method: "POST" });
       if (!res.ok) {
-        toast.error("Re-check failed", { description: "Could not start a new crawl.", duration: 8000 });
+        toast.error("Re-crawl failed", { description: "Could not start a new crawl.", duration: 8000 });
         return;
       }
       const { crawlId: newId } = await res.json();
       addPendingCrawl({ type: "crawl", crawlId: newId, siteId: crawl.siteId, hostname: hostname ?? "site" });
-      toast("Re-check started!", {
+      toast("Re-crawl started!", {
         description: "A new crawl is running. Redirecting…",
         duration: 5000,
       });
@@ -288,7 +368,7 @@ export default function CrawlPage({
     } catch {
       toast.error("Network error — please try again", { duration: 5000 });
     } finally {
-      setRechecking(false);
+      setRecrawling(false);
     }
   }
 
@@ -513,16 +593,27 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 </Button>
               )}
 
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleRecheck}
-                disabled={rechecking}
-                className="gap-1.5"
-              >
-                {rechecking ? <Spinner className="size-3.5" /> : <RefreshCwIcon className="size-3.5" />}
-                Re-check now
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRecrawl}
+                      disabled={recrawling}
+                      className="gap-1.5"
+                    />
+                  }
+                >
+                  {recrawling ? <Spinner className="size-3.5" /> : <RefreshCwIcon className="size-3.5" />}
+                  Re-crawl now
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-64 text-center">
+                  Re-crawls the site. If the crawler reaches different pages, or a
+                  previously reached page&apos;s content has changed, the llms.txt
+                  files are regenerated.
+                </TooltipContent>
+              </Tooltip>
             </div>
           )}
         </div>

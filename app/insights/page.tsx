@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { removePendingInsight } from "@/lib/pending-jobs";
+import { addPendingInsight, removePendingInsight } from "@/lib/pending-jobs";
 import { toast } from "sonner";
 import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import { FaviconImg } from "@/components/favicon-img";
@@ -77,6 +77,8 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "dest
   completed: "outline",
   failed:    "destructive",
 };
+
+const STRUCTURE_BOOST: Record<string, number> = { Excellent: 0.8, Great: 0.4, Good: 0 };
 
 const PLACEMENT_COLOR: Record<string, string> = {
   Excellent: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
@@ -223,7 +225,7 @@ function InsightsPageInner() {
   }, []);
 
   // Fetch all insights for selected site
-  const fetchInsights = useCallback(async (siteId: string) => {
+  const fetchInsights = useCallback(async (siteId: string): Promise<Insight[] | undefined> => {
     if (!siteId) return;
     const res = await fetch(`/api/sites/${siteId}/insights?all=true`);
     if (!res.ok) return;
@@ -233,6 +235,7 @@ function InsightsPageInner() {
     if (data[0]?.status === "completed" || data[0]?.status === "failed") {
       removePendingInsight(siteId);
     }
+    return data;
   }, []);
 
   // Reset and reload when site changes
@@ -244,14 +247,32 @@ function InsightsPageInner() {
     fetchInsights(selectedSiteId);
   }, [selectedSiteId, fetchInsights]);
 
-  // Poll while the most recent insight is still in-progress
+  // Poll while the most recent insight is still in-progress; toast when it finishes
   useEffect(() => {
     if (!insights?.length) return;
     const latest = insights[0];
     if (latest.status !== "pending" && latest.status !== "running") return;
-    const timer = setTimeout(() => fetchInsights(selectedSiteId), 2000);
+    const timer = setTimeout(async () => {
+      const data = await fetchInsights(selectedSiteId);
+      const updated = data?.find((i) => i.id === latest.id);
+      const site = sites.find((s) => s.siteId === selectedSiteId);
+      const name = site?.hostname ?? "site";
+      // id matches the JobPoller toast so the two can never double-fire
+      if (updated?.status === "completed") {
+        toast.success(`Insights ready for ${name}`, {
+          id: `insight-${selectedSiteId}`,
+          description: "Model comparison is complete.",
+          duration: 8000,
+        });
+      } else if (updated?.status === "failed") {
+        toast.error(`Insights failed for ${name}`, {
+          id: `insight-${selectedSiteId}`,
+          duration: 8000,
+        });
+      }
+    }, 2000);
     return () => clearTimeout(timer);
-  }, [insights, selectedSiteId, fetchInsights]);
+  }, [insights, selectedSiteId, sites, fetchInsights]);
 
   async function handleGenerate() {
     if (!selectedSiteId) return;
@@ -270,7 +291,9 @@ function InsightsPageInner() {
         });
         return;
       }
-      // 202 — new insight queued
+      // 202 — new insight queued; register it so JobPoller can toast if the user navigates away
+      const site = sites.find((s) => s.siteId === selectedSiteId);
+      addPendingInsight({ type: "insight", siteId: selectedSiteId, hostname: site?.hostname ?? "site" });
       await fetchInsights(selectedSiteId);
       setActiveInsightId(null); // reset to show the newest pending entry
     } finally {
@@ -278,8 +301,11 @@ function InsightsPageInner() {
     }
   }
 
+  // Rank on the uncapped score (accuracy + structure boost, before the 10.0 cap)
+  // so two models both displaying 10.0 are ordered by structure placement.
+  const uncapped = (r: EvalResult) => r.accuracy + (STRUCTURE_BOOST[r.structurePlacement] ?? 0);
   const sortedResults = activeInsight?.evalResults
-    ? [...activeInsight.evalResults].sort((a, b) => b.finalScore - a.finalScore)
+    ? [...activeInsight.evalResults].sort((a, b) => uncapped(b) - uncapped(a))
     : [];
 
   const selectedSite = sites.find((s) => s.siteId === selectedSiteId);

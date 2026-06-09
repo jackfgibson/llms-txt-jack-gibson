@@ -29,6 +29,7 @@ export function JobPoller() {
               removePendingCrawl(job.crawlId);
               const crawlId = job.crawlId;
               toast.success(`llms.txt ready for ${job.hostname}`, {
+                id: `crawl-${crawlId}`,
                 description: "Generation is complete.",
                 action: {
                   label: "View",
@@ -39,6 +40,7 @@ export function JobPoller() {
             } else if (data.status === "failed") {
               removePendingCrawl(job.crawlId);
               toast.error(`Generation failed for ${job.hostname}`, {
+                id: `crawl-${job.crawlId}`,
                 duration: 6000,
               });
             }
@@ -55,6 +57,7 @@ export function JobPoller() {
               removePendingInsight(job.siteId);
               const siteId = job.siteId;
               toast.success(`Insights ready for ${job.hostname}`, {
+                id: `insight-${siteId}`,
                 description: "Model comparison is complete.",
                 action: {
                   label: "View",
@@ -65,6 +68,7 @@ export function JobPoller() {
             } else if (data.status === "failed") {
               removePendingInsight(job.siteId);
               toast.error(`Insights failed for ${job.hostname}`, {
+                id: `insight-${job.siteId}`,
                 duration: 8000,
               });
             }
