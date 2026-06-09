@@ -22,11 +22,16 @@ export function FaviconImg({
   }
 
   return (
-    <img
-      src={src}
-      alt=""
-      className={`${cls} rounded-sm object-contain shrink-0`}
-      onError={() => setFailed(true)}
-    />
+    <span
+      className={`${cls} inline-flex items-center justify-center rounded-md shrink-0 p-px`}
+      style={{ background: "radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(255,255,255,0.5) 100%)" }}
+    >
+      <img
+        src={src}
+        alt=""
+        className="w-full h-full object-contain"
+        onError={() => setFailed(true)}
+      />
+    </span>
   );
 }
