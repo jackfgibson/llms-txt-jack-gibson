@@ -45,6 +45,7 @@ export const sites = pgTable("sites", {
   url: text("url").notNull(), // normalized origin
   slug: text("slug").notNull().unique(),
   scheduleCron: text("schedule_cron"),
+  faviconUrl: text("favicon_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -60,6 +61,7 @@ export const crawls = pgTable(
     providers: text("providers").array(), // requested providers, e.g. ["anthropic","openai"]
     stats: jsonb("stats").$type<CrawlStats>(),
     progress: jsonb("progress").$type<CrawlProgress>(),
+    automated: boolean("automated").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },

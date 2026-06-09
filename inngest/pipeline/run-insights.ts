@@ -4,6 +4,8 @@ import { insightsRequested, insightsCompleted } from "../events";
 import { db, schema } from "@/lib/db";
 
 const STRUCTURE_BOOST: Record<string, number> = { Excellent: 0.8, Great: 0.4, Good: 0.0 };
+// Cheapest-model-wins tiebreaker: used only when votes AND accuracy are exactly equal
+const PROVIDER_PRIORITY: Record<string, number> = { openai: 0, gemini: 1, anthropic: 2 };
 
 function round1dp(n: number) {
   return Math.round(n * 10) / 10;
@@ -136,49 +138,64 @@ export const runInsights = inngest.createFunction(
       return results;
     });
 
-    // ── Step 5: grade all 12 answers (3 models × 4 answers) ─────────────────
+    // ── Step 5: grade all answers in a single batch call ────────────────────
     const gradedResults = await step.run("grade-answers", async () => {
-      const { gradeAnswer } = await import("@/lib/llm/grade-answer");
+      const { gradeAllAnswers } = await import("@/lib/llm/grade-answer");
 
       const providers = ["anthropic", "openai", "gemini"] as const;
 
-      const graded = await Promise.all(
-        evalResults.map(async ({ provider, result }) => {
+      // Flatten all Q&A items in stable order (per provider, then per answer)
+      const flatItems: Array<{
+        provider: string;
+        question: string;
+        correctAnswer: string;
+        givenAnswer: string;
+      }> = [];
 
-          const questionSets = providers
-            .filter((p) => p !== provider)
-            .flatMap((p) =>
-              (
-                questionRows.find((q) => q.provider === p)!.questions as Array<{
-                  question: string;
-                  correctAnswer: string;
-                }>
-              ).map((q) => ({ ...q, sourceProvider: p })),
-            );
-
-          const scoredAnswers = await Promise.all(
-            result.answers.map(async (a, i) => {
-              const qInfo = questionSets[i];
-              const gradeResult = await gradeAnswer({
-                question: a.question,
-                correctAnswer: qInfo?.correctAnswer ?? "",
-                givenAnswer: a.answer,
-              });
-              return {
-                question: a.question,
-                correctAnswer: qInfo?.correctAnswer ?? "",
-                givenAnswer: a.answer,
-                score: gradeResult?.score ?? 0,
-                reasoning: gradeResult?.reasoning ?? "grading failed",
-              };
-            }),
+      for (const { provider, result } of evalResults) {
+        const correctAnswers = providers
+          .filter((p) => p !== provider)
+          .flatMap((p) =>
+            (
+              questionRows.find((q) => q.provider === p)!.questions as Array<{
+                question: string;
+                correctAnswer: string;
+              }>
+            ).map((q) => q.correctAnswer),
           );
 
-          return { provider, scoredAnswers, structurePick: result.structurePick };
-        }),
+        result.answers.forEach((a, i) => {
+          flatItems.push({
+            provider,
+            question: a.question,
+            correctAnswer: correctAnswers[i] ?? "",
+            givenAnswer: a.answer,
+          });
+        });
+      }
+
+      const grades = await gradeAllAnswers(
+        flatItems.map(({ question, correctAnswer, givenAnswer }) => ({
+          question,
+          correctAnswer,
+          givenAnswer,
+        })),
       );
 
-      return graded;
+      return evalResults.map(({ provider, result }) => {
+        const scoredAnswers = flatItems
+          .map((item, globalIdx) => ({ item, globalIdx }))
+          .filter(({ item }) => item.provider === provider)
+          .map(({ item, globalIdx }) => ({
+            question: item.question,
+            correctAnswer: item.correctAnswer,
+            givenAnswer: item.givenAnswer,
+            score: grades[globalIdx]?.score ?? 0,
+            reasoning: grades[globalIdx]?.reasoning ?? "grading failed",
+          }));
+
+        return { provider, scoredAnswers, structurePick: result.structurePick };
+      });
     });
 
     // ── Step 6: compute final scores and persist ──────────────────────────────
@@ -202,7 +219,10 @@ export const runInsights = inngest.createFunction(
 
       // Rank by votes, tie-break by accuracy
       const ranked = [...providers].sort(
-        (a, b) => votes[b] - votes[a] || accuracyMap[b] - accuracyMap[a],
+        (a, b) =>
+          votes[b] - votes[a] ||
+          accuracyMap[b] - accuracyMap[a] ||
+          (PROVIDER_PRIORITY[a] ?? 3) - (PROVIDER_PRIORITY[b] ?? 3),
       );
       const placements = ["Excellent", "Great", "Good"] as const;
       const placementMap = Object.fromEntries(ranked.map((p, i) => [p, placements[i]]));

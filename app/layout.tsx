@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
+import { JobPoller } from "@/components/job-poller";
 
 const rubik = localFont({
   src: [
@@ -52,6 +53,7 @@ export default function RootLayout({
           </SidebarProvider>
         </TooltipProvider>
         <Toaster position="bottom-right" />
+        <JobPoller />
         </ThemeProvider>
       </body>
     </html>

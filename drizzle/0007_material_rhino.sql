@@ -1,0 +1,1 @@
+ALTER TABLE "crawls" ADD COLUMN "automated" boolean DEFAULT false NOT NULL;

@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, RefreshCwIcon } from "lucide-react";
+import { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { removePendingInsight } from "@/lib/pending-jobs";
+import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, DownloadIcon, RefreshCwIcon } from "lucide-react";
+import { FaviconImg } from "@/components/favicon-img";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +29,7 @@ interface SiteGroup {
   siteId: string;
   hostname: string;
   slug: string;
+  faviconUrl: string | null;
   latest: { crawlId: string; status: string; providers: string[] };
 }
 
@@ -52,51 +61,85 @@ interface Insight {
   evalResults: EvalResult[];
 }
 
+const PROVIDER_FILENAME: Record<string, string> = {
+  anthropic: "claude",
+  openai:    "chatgpt",
+  gemini:    "gemini",
+  fallback:  "deterministic",
+};
+
 const PLACEMENT_COLOR: Record<string, string> = {
   Excellent: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   Great:     "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   Good:      "bg-muted text-muted-foreground",
 };
 
-function ModelRow({ result, isWinner, expanded, onToggle }: {
+function ModelRow({ result, isWinner, expanded, onToggle, siteId, crawlId, hostname }: {
   result: EvalResult;
   isWinner: boolean;
   expanded: boolean;
   onToggle: () => void;
+  siteId: string;
+  crawlId: string;
+  hostname: string;
 }) {
   const meta = PROVIDER_META[result.provider] ?? { logo: "/providers/fallback.png", label: result.provider };
+
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    const res = await fetch(`/api/sites/${siteId}/generation?crawlId=${crawlId}&provider=${result.provider}`);
+    if (!res.ok) return;
+    const text = await res.text();
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${PROVIDER_FILENAME[result.provider] ?? result.provider}_llms.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="rounded-xl border border-border overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/40 transition-colors text-left"
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {isWinner && <span className="text-base leading-none">👑</span>}
-          <img
-            src={meta.logo}
-            alt={meta.label}
-            className="w-6 h-6 object-contain shrink-0"
-            style={{ imageRendering: "pixelated" }}
-          />
-          <span className="text-sm font-medium">{meta.label}</span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-xs text-muted-foreground">
-            Accuracy <span className="font-semibold text-foreground tabular-nums">{result.accuracy.toFixed(1)}</span>/10
-          </span>
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${PLACEMENT_COLOR[result.structurePlacement]}`}>
-            {result.structurePlacement}
-          </span>
-          <span className="text-sm font-semibold tabular-nums">
-            {result.finalScore.toFixed(1)}
-          </span>
-          {expanded
-            ? <ChevronDownIcon className="size-4 text-muted-foreground" />
-            : <ChevronRightIcon className="size-4 text-muted-foreground" />
-          }
-        </div>
-      </button>
+      <div className="flex items-center">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-3 px-4 py-3 flex-1 min-w-0 hover:bg-muted/40 transition-colors text-left"
+        >
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <img
+              src={meta.logo}
+              alt={meta.label}
+              className="w-6 h-6 object-contain shrink-0"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <span className="text-sm font-medium">{meta.label}</span>
+            {isWinner && <span className="text-base leading-none">&#x1F451;</span>}
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-xs text-muted-foreground">
+              Accuracy <span className="font-semibold text-foreground tabular-nums">{result.accuracy.toFixed(1)}</span>/10
+            </span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${PLACEMENT_COLOR[result.structurePlacement]}`}>
+              {result.structurePlacement}
+            </span>
+            <span className="text-sm font-semibold tabular-nums">
+              {result.finalScore.toFixed(1)}
+            </span>
+            {expanded
+              ? <ChevronDownIcon className="size-4 text-muted-foreground" />
+              : <ChevronRightIcon className="size-4 text-muted-foreground" />
+            }
+          </div>
+        </button>
+        <button
+          onClick={handleDownload}
+          className="flex items-center justify-center px-3 py-3 text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors shrink-0 border-l border-border self-stretch"
+          title={`Download ${meta.label} llms.txt`}
+        >
+          <DownloadIcon className="size-5" />
+        </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-border px-4 py-4 space-y-4 bg-muted/20">
@@ -133,10 +176,13 @@ function ModelRow({ result, isWinner, expanded, onToggle }: {
   );
 }
 
-export default function InsightsPage() {
+function InsightsPageInner() {
+  const searchParams = useSearchParams();
+  const preselectedSiteId = searchParams.get("siteId") ?? "";
+
   const [sites, setSites] = useState<SiteGroup[]>([]);
   const [sitesLoading, setSitesLoading] = useState(true);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>("");
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(preselectedSiteId);
   const [insight, setInsight] = useState<Insight | null | undefined>(undefined);
   const [triggering, setTriggering] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
@@ -166,6 +212,10 @@ export default function InsightsPage() {
     if (!res.ok) return;
     const data: Insight | null = await res.json();
     setInsight(data);
+    // If this page is watching and the job finishes, remove from global pending so the poller doesn't double-toast
+    if (data?.status === "completed" || data?.status === "failed") {
+      removePendingInsight(siteId);
+    }
   }, []);
 
   // Poll while pending or running
@@ -203,13 +253,46 @@ export default function InsightsPage() {
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-10 min-h-screen">
+
       <div className="w-full max-w-2xl space-y-8">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Model Insights</h1>
-          <p className="text-sm text-muted-foreground">
-            Compare how Claude, GPT-4o, and Gemini perform on accuracy and structure for a given site.
-            Requires a crawl with all 3 LLM providers.
-          </p>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">Model Insights</h1>
+            <p className="text-sm text-muted-foreground">
+              Compare how Claude, GPT-4o, and Gemini perform on accuracy and structure for a given site.
+              Requires latest crawl performed with all 3 LLM providers.
+            </p>
+          </div>
+          <Collapsible>
+            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3 text-left hover:bg-muted/50 transition-colors [&[data-state=open]>svg]:rotate-180">
+              <span className="text-xs font-medium text-foreground">How it works</span>
+              <ChevronDownIcon className="size-3.5 text-muted-foreground transition-transform duration-200" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none">
+              <div className="rounded-b-lg border border-t-0 border-border bg-muted/20 px-4 py-3 space-y-2">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Each model generates its own <code className="font-mono bg-muted px-1 rounded">llms.txt</code> from the crawled site.
+                  Then each model is tested on the other two models&apos; documents — answering 4 factual questions worth 2.5 pts each (10 pts total).
+                  Models also vote on which competitor&apos;s output has the best structure.
+                  The final score is <span className="text-foreground font-medium">Accuracy + Structure Boost</span>.
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">Excellent</span>
+                    <span className="text-muted-foreground">Most structure votes — +0.8 pts</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">Great</span>
+                    <span className="text-muted-foreground">Second most votes — +0.4 pts</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">Good</span>
+                    <span className="text-muted-foreground">Fewest structure votes — +0 pts</span>
+                  </span>
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
 
         {/* Site selector */}
@@ -224,10 +307,16 @@ export default function InsightsPage() {
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors">
-                <span className={selectedSiteId ? "text-foreground" : "text-muted-foreground"}>
-                  {selectedSiteId
-                    ? (sites.find((s) => s.siteId === selectedSiteId)?.hostname ?? "— choose a site —")
-                    : "Select a site"}
+                <span className={`flex items-center gap-2 ${selectedSiteId ? "text-foreground" : "text-muted-foreground"}`}>
+                  {(() => {
+                    const selected = sites.find((s) => s.siteId === selectedSiteId);
+                    return selected ? (
+                      <>
+                        <FaviconImg src={selected.faviconUrl} />
+                        {selected.hostname}
+                      </>
+                    ) : "Select a site";
+                  })()}
                 </span>
                 <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
               </DropdownMenuTrigger>
@@ -239,7 +328,9 @@ export default function InsightsPage() {
                       setSelectedSiteId(s.siteId);
                       setExpandedProviders({});
                     }}
+                    className="flex items-center gap-2"
                   >
+                    <FaviconImg src={s.faviconUrl} />
                     {s.hostname}
                   </DropdownMenuItem>
                 ))}
@@ -264,7 +355,7 @@ export default function InsightsPage() {
                   {triggering && <Spinner className="size-4" />}
                   Generate Model Insights
                 </Button>
-                <p className="text-xs text-muted-foreground">This may take over a minute — the evaluation runs 18 LLM calls across all three providers.</p>
+                <p className="text-xs text-muted-foreground">This may take a minute or two to complete.</p>
               </div>
             )}
 
@@ -290,10 +381,7 @@ export default function InsightsPage() {
 
             {insight?.status === "completed" && sortedResults.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium">Results</p>
-                  <span className="text-xs text-muted-foreground">Score = accuracy + structure boost</span>
-                </div>
+                <p className="text-sm font-medium">Results</p>
                 {sortedResults.map((result) => (
                   <ModelRow
                     key={result.provider}
@@ -306,6 +394,9 @@ export default function InsightsPage() {
                         [result.provider]: !prev[result.provider],
                       }))
                     }
+                    siteId={insight.siteId}
+                    crawlId={insight.crawlId}
+                    hostname={sites.find((s) => s.siteId === insight.siteId)?.hostname ?? "site"}
                   />
                 ))}
               </div>
@@ -314,5 +405,13 @@ export default function InsightsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function InsightsPage() {
+  return (
+    <Suspense>
+      <InsightsPageInner />
+    </Suspense>
   );
 }

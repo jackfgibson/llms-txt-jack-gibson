@@ -86,6 +86,17 @@ export const crawlSite = inngest.createFunction(
         depth: p.depth,
       }));
 
+      // Extract and persist the site's favicon from the homepage (depth 0).
+      const { extractFaviconUrl } = await import("@/lib/extract/favicon");
+      const homePage = result.pages.find((p) => p.depth === 0) ?? result.pages[0];
+      if (homePage) {
+        const faviconUrl = extractFaviconUrl(homePage.html, url);
+        await db
+          .update(schema.sites)
+          .set({ faviconUrl })
+          .where(eq(schema.sites.id, siteId));
+      }
+
       if (extractedPages.length > 0) {
         await db
           .insert(schema.pages)

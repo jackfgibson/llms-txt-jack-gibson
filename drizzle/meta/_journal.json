@@ -43,6 +43,20 @@
       "when": 1780888499000,
       "tag": "0005_bouncy_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780964278556,
+      "tag": "0006_quick_sleeper",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780964606815,
+      "tag": "0007_material_rhino",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowRightIcon, DownloadIcon, MoreHorizontalIcon } from "lucide-react";
+import { FaviconImg } from "@/components/favicon-img";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -29,6 +30,13 @@ const PROVIDER_MODEL: Record<string, string> = {
   fallback:  "Non-LLM",
 };
 
+const PROVIDER_FILENAME: Record<string, string> = {
+  anthropic: "claude",
+  openai:    "chatgpt",
+  gemini:    "gemini",
+  fallback:  "deterministic",
+};
+
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   pending:    "secondary",
   crawling:   "secondary",
@@ -42,12 +50,14 @@ interface CrawlRun {
   status: string;
   providers: string[];
   submittedAt: string;
+  automated: boolean;
 }
 
 interface SiteGroup {
   siteId: string;
   hostname: string;
   slug: string;
+  faviconUrl: string | null;
   latest: CrawlRun;
   previousRuns: CrawlRun[];
 }
@@ -91,30 +101,30 @@ function triggerDownload(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadSingle(crawlId: string, provider: string, hostname: string) {
+async function downloadSingle(crawlId: string, provider: string, _hostname: string) {
   const gens = await fetchGenerationsForCrawl(crawlId);
   const gen = gens.find((g) => g.provider === provider);
   if (!gen) return;
-  triggerDownload(`llms-${hostname}-${PROVIDER_MODEL[provider] ?? provider}.txt`, gen.content);
+  triggerDownload(`${PROVIDER_FILENAME[provider] ?? provider}_llms.txt`, gen.content);
 }
 
 async function downloadAll(crawlId: string, hostname: string) {
   const gens = await fetchGenerationsForCrawl(crawlId);
   if (gens.length === 0) return;
   if (gens.length === 1) {
-    triggerDownload(`llms-${hostname}-${PROVIDER_MODEL[gens[0].provider] ?? gens[0].provider}.txt`, gens[0].content);
+    triggerDownload(`${PROVIDER_FILENAME[gens[0].provider] ?? gens[0].provider}_llms.txt`, gens[0].content);
     return;
   }
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
   for (const gen of gens) {
-    zip.file(`llms-${PROVIDER_MODEL[gen.provider] ?? gen.provider}.txt`, gen.content);
+    zip.file(`${PROVIDER_FILENAME[gen.provider] ?? gen.provider}_llms.txt`, gen.content);
   }
   const blob = await zip.generateAsync({ type: "blob" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `llms-${hostname}.zip`;
+  a.download = `${hostname}_llms_txt.zip`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -122,7 +132,7 @@ async function downloadAll(crawlId: string, hostname: string) {
 const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
 
 function SiteCard({ group }: { group: SiteGroup }) {
-  const { latest, hostname, previousRuns } = group;
+  const { latest, hostname, previousRuns, faviconUrl } = group;
   const totalRuns = previousRuns.length + 1;
   const isRunning = latest.status !== "completed" && latest.status !== "failed";
   const isCompleted = latest.status === "completed";
@@ -152,8 +162,9 @@ function SiteCard({ group }: { group: SiteGroup }) {
       <Link href={`/crawls/${latest.crawlId}`} className="flex items-center gap-3 flex-1 min-w-0">
         {isRunning && <Spinner className="size-3.5 shrink-0 text-muted-foreground" />}
         <div className="min-w-0">
-          {/* Row 1: hostname · all-time provider logos · run count */}
+          {/* Row 1: favicon · hostname · all-time provider logos · run count */}
           <div className="flex items-center gap-2 min-w-0">
+            <FaviconImg src={faviconUrl} />
             <p className="text-sm font-medium truncate shrink min-w-0">{hostname}</p>
             <div className="flex items-center gap-1 shrink-0">
               {allTimeProviders.map((p) => (
@@ -186,6 +197,11 @@ function SiteCard({ group }: { group: SiteGroup }) {
             />
           ))}
         </div>
+        {latest.automated && (
+          <Badge variant="secondary" className="text-[10px]">
+            Automated
+          </Badge>
+        )}
         <Badge
           variant={STATUS_VARIANT[latest.status] ?? "secondary"}
           className={latest.status === "completed" ? "bg-green-500/15 text-green-700 border-green-500/30 dark:text-green-400" : undefined}
