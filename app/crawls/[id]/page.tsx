@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon, SparklesIcon, TelescopeIcon } from "lucide-react";
+import { FaviconImg } from "@/components/favicon-img";
+import { addPendingCrawl, addPendingInsight, removePendingCrawl, removePendingInsight } from "@/lib/pending-jobs";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,7 @@ interface Crawl {
   id: string;
   siteId: string;
   status: "pending" | "crawling" | "generating" | "completed" | "failed";
+  automated: boolean;
   stats: Record<string, number> | null;
   progress: { phase?: string; done?: number; total?: number } | null;
   providers: string[] | null;
@@ -47,7 +50,7 @@ interface Generation {
 }
 
 interface SiteData {
-  site: { id: string; url: string; slug: string };
+  site: { id: string; url: string; slug: string; faviconUrl?: string | null };
   recentCrawls: Crawl[];
 }
 
@@ -89,8 +92,15 @@ const PROVIDER_META: Record<string, { logo: string; label: string }> = {
 const PROVIDER_MODEL: Record<string, string> = {
   anthropic: "Claude Haiku",
   openai:    "GPT-4o mini",
-  gemini:    "Gemini 2.0 Flash",
+  gemini:    "Gemini 3 Flash",
   fallback:  "Non-LLM",
+};
+
+const PROVIDER_FILENAME: Record<string, string> = {
+  anthropic: "claude",
+  openai:    "chatgpt",
+  gemini:    "gemini",
+  fallback:  "deterministic",
 };
 
 function GenerationPanel({
@@ -113,15 +123,11 @@ function GenerationPanel({
   }
 
   function download() {
-    const label = PROVIDER_MODEL[generation.provider] ?? generation.provider;
-    const filename = hostname
-      ? `llms-${hostname}-v${generation.version}-${label}.txt`
-      : `llms-v${generation.version}-${label}.txt`;
     const blob = new Blob([generation.content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = filename;
+    a.download = `${PROVIDER_FILENAME[generation.provider] ?? generation.provider}_llms.txt`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -180,8 +186,11 @@ export default function CrawlPage({
   const [crawl, setCrawl] = useState<Crawl | null>(null);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
   const [changeEvent, setChangeEvent] = useState<ChangeEvent | null | undefined>(undefined);
+  type InsightStatus = "none" | "pending" | "running" | "completed" | "failed";
+  const [insightStatus, setInsightStatus] = useState<InsightStatus>("none");
   const [rechecking, setRechecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [generatingInsights, setGeneratingInsights] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -203,6 +212,8 @@ export default function CrawlPage({
         }
 
         if (data.status === "completed" || data.status === "failed") {
+          // Remove pending crawl job — this page has observed the result
+          removePendingCrawl(crawlId);
           // Re-fetch site data on completion to pick up new generation
           const siteRes = await fetch(`/api/sites/${data.siteId}`);
           if (siteRes.ok) setSiteData(await siteRes.json());
@@ -213,6 +224,21 @@ export default function CrawlPage({
             setChangeEvent(ev ?? null);
           } else {
             setChangeEvent(null);
+          }
+          // Fetch current insight status for this site
+          if (data.status === "completed") {
+            const insightRes = await fetch(`/api/sites/${data.siteId}/insights`);
+            if (insightRes.ok) {
+              const insight = await insightRes.json();
+              if (insight) {
+                setInsightStatus(insight.status as InsightStatus);
+                if (insight.status === "completed" || insight.status === "failed") {
+                  removePendingInsight(data.siteId);
+                }
+              } else {
+                setInsightStatus("none");
+              }
+            }
           }
           return;
         }
@@ -226,25 +252,70 @@ export default function CrawlPage({
     return () => clearTimeout(timer);
   }, [crawlId]);
 
+  // Poll insight status while it is in-progress (crawl poll has already stopped by this point)
+  useEffect(() => {
+    if (!crawl?.siteId) return;
+    if (insightStatus !== "pending" && insightStatus !== "running") return;
+    const timer = setTimeout(async () => {
+      const res = await fetch(`/api/sites/${crawl.siteId}/insights`);
+      if (!res.ok) return;
+      const insight = await res.json();
+      if (!insight) return;
+      setInsightStatus(insight.status as InsightStatus);
+      if (insight.status === "completed" || insight.status === "failed") {
+        removePendingInsight(crawl.siteId);
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [crawl?.siteId, insightStatus]);
+
   async function handleRecheck() {
     if (!crawl || !siteData) return;
     setRechecking(true);
     try {
       const res = await fetch(`/api/sites/${crawl.siteId}/crawl`, { method: "POST" });
       if (!res.ok) {
-        toast.error("Re-check failed", { description: "Could not start a new crawl." });
+        toast.error("Re-check failed", { description: "Could not start a new crawl.", duration: 8000 });
         return;
       }
       const { crawlId: newId } = await res.json();
+      addPendingCrawl({ type: "crawl", crawlId: newId, siteId: crawl.siteId, hostname: hostname ?? "site" });
       toast("Re-check started!", {
         description: "A new crawl is running. Redirecting…",
-        duration: 4000,
+        duration: 5000,
       });
       router.push(`/crawls/${newId}`);
     } catch {
-      toast.error("Network error — please try again");
+      toast.error("Network error — please try again", { duration: 5000 });
     } finally {
       setRechecking(false);
+    }
+  }
+
+  async function handleGenerateInsights() {
+    if (!crawl) return;
+    setGeneratingInsights(true);
+    try {
+      const res = await fetch(`/api/sites/${crawl.siteId}/insights`, { method: "POST" });
+      if (!res.ok) {
+        toast.error("Could not trigger insights — please try again", { duration: 5000 });
+        return;
+      }
+      setInsightStatus("pending");
+      addPendingInsight({ type: "insight", siteId: crawl.siteId, hostname: hostname ?? "site" });
+      const siteId = crawl.siteId;
+      toast("Insights generation started!", {
+        description: "This may take a minute or two.",
+        action: {
+          label: "View progress →",
+          onClick: () => router.push(`/insights?siteId=${siteId}`),
+        },
+        duration: 6000,
+      });
+    } catch {
+      toast.error("Network error — please try again", { duration: 5000 });
+    } finally {
+      setGeneratingInsights(false);
     }
   }
 
@@ -261,9 +332,7 @@ export default function CrawlPage({
   async function handleDownloadSingle(provider: string) {
     const gen = generations.find((g) => g.provider === provider);
     if (!gen) return;
-    const label = PROVIDER_MODEL[provider] ?? provider;
-    const name = hostname ?? "site";
-    triggerDownload(`llms-${name}-v${gen.version}-${label}.txt`, gen.content);
+    triggerDownload(`${PROVIDER_FILENAME[provider] ?? provider}_llms.txt`, gen.content);
   }
 
   async function handleDownloadAll() {
@@ -278,14 +347,13 @@ export default function CrawlPage({
       const zip = new JSZip();
       const name = hostname ?? "site";
       for (const gen of generations) {
-        const label = PROVIDER_MODEL[gen.provider] ?? gen.provider;
-        zip.file(`llms-${label}.txt`, gen.content);
+        zip.file(`${PROVIDER_FILENAME[gen.provider] ?? gen.provider}_llms.txt`, gen.content);
       }
       const blob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `llms-${name}-v${generations[0]?.version ?? 1}.zip`;
+      a.download = `${name}_llms_txt.zip`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -294,6 +362,11 @@ export default function CrawlPage({
   }
 
 const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
+  const LLM_PROVIDERS = ["anthropic", "openai", "gemini"];
+  const isInsightsEligible =
+    crawl?.status === "completed" &&
+    LLM_PROVIDERS.every((p) => crawl.providers?.includes(p));
+
   // Use this crawl's own generations — not the site's latest version
   const generations = (crawl?.generations ?? []).slice().sort(
     (a, b) => PROVIDER_ORDER.indexOf(a.provider) - PROVIDER_ORDER.indexOf(b.provider),
@@ -341,7 +414,18 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             {hostname ? (
-              <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
+              <div className="flex items-center gap-2">
+                <FaviconImg src={siteData?.site.faviconUrl ?? null} size="md" />
+                <a
+                  href={site?.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-center gap-1.5 hover:underline"
+                >
+                  <h1 className="text-2xl font-semibold tracking-tight">{hostname}</h1>
+                  <ExternalLinkIcon className="size-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                </a>
+              </div>
             ) : (
               <div className="h-7 w-48 rounded-md bg-muted animate-pulse" />
             )}
@@ -399,6 +483,35 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 </DropdownMenu>
               )}
 
+              {isInsightsEligible && (
+                insightStatus === "none" || insightStatus === "failed"
+                  ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleGenerateInsights}
+                      disabled={generatingInsights}
+                      className="gap-1.5"
+                    >
+                      {generatingInsights ? <Spinner className="size-3.5" /> : <SparklesIcon className="size-3.5" />}
+                      Generate Insights
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => router.push(`/insights?siteId=${crawl.siteId}`)}
+                      className="gap-1.5"
+                    >
+                      {(insightStatus === "pending" || insightStatus === "running")
+                        ? <Spinner className="size-3.5" />
+                        : <TelescopeIcon className="size-3.5" />
+                      }
+                      {insightStatus === "completed" ? "View Insights" : "Insights Running…"}
+                    </Button>
+                  )
+              )}
+
               <Button
                 size="sm"
                 variant="outline"
@@ -440,7 +553,7 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
         {crawl?.status === "failed" && (
           <div className="rounded-xl border border-border p-6">
             <p className="text-sm text-destructive">
-              The crawl failed. Check that the URL is reachable and try again.
+              The crawl failed. The site is either unreachable, or is blocking our crawlers.
             </p>
           </div>
         )}
@@ -635,6 +748,13 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                             hour: "2-digit", minute: "2-digit",
                           })}
                     </span>
+
+                    {/* Automated badge */}
+                    {(c as Crawl).automated && (
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        Automated
+                      </Badge>
+                    )}
 
                     {/* Status */}
                     <Badge

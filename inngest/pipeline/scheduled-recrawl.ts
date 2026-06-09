@@ -28,7 +28,7 @@ export const scheduledRecrawl = inngest.createFunction(
       const crawls = await db
         .insert(schema.crawls)
         .values(
-          sites.map((s) => ({ siteId: s.id, status: "pending" as const, mode: "recrawl" as const })),
+          sites.map((s) => ({ siteId: s.id, status: "pending" as const, mode: "recrawl" as const, automated: true })),
         )
         .returning({ id: schema.crawls.id, siteId: schema.crawls.siteId });
 

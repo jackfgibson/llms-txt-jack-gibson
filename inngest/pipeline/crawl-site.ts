@@ -86,6 +86,17 @@ export const crawlSite = inngest.createFunction(
         depth: p.depth,
       }));
 
+      // Extract and persist the site's favicon from the homepage (depth 0).
+      const { extractFaviconUrl } = await import("@/lib/extract/favicon");
+      const homePage = result.pages.find((p) => p.depth === 0) ?? result.pages[0];
+      if (homePage) {
+        const faviconUrl = extractFaviconUrl(homePage.html, url);
+        await db
+          .update(schema.sites)
+          .set({ faviconUrl })
+          .where(eq(schema.sites.id, siteId));
+      }
+
       if (extractedPages.length > 0) {
         await db
           .insert(schema.pages)
@@ -351,6 +362,54 @@ export const crawlSite = inngest.createFunction(
 
         return { generationIds: inserted.map((g) => g.id), version };
       });
+
+      // ── Step 6: silently generate Q&A pairs (only when all 3 LLM providers ran) ─
+      const llmProviders = ["anthropic", "openai", "gemini"] as const;
+      const allThreePresent = llmProviders.every((p) =>
+        generationResults.some((r) => r.provider === p),
+      );
+
+      if (allThreePresent) {
+        await step.run("generate-questions", async () => {
+          const { generateQuestionsForModel } = await import("@/lib/llm/generate-questions");
+
+          await Promise.all(
+            generationResults
+              .filter((r) => (llmProviders as readonly string[]).includes(r.provider))
+              .map(async (r) => {
+                const pairs = await generateQuestionsForModel(
+                  r.content,
+                  r.provider as "anthropic" | "openai" | "gemini",
+                );
+                if (!pairs) return;
+
+                const [persisted] = await db
+                  .select({ id: schema.generations.id })
+                  .from(schema.generations)
+                  .where(
+                    and(
+                      eq(schema.generations.crawlId, crawlId),
+                      eq(schema.generations.provider, r.provider),
+                    ),
+                  )
+                  .limit(1);
+
+                if (!persisted) return;
+
+                await db
+                  .insert(schema.modelQuestions)
+                  .values({
+                    siteId,
+                    crawlId,
+                    generationId: persisted.id,
+                    provider: r.provider,
+                    questions: pairs,
+                  })
+                  .onConflictDoNothing();
+              }),
+          );
+        });
+      }
     } else {
       // No meaningful change — keep the existing live generation, just complete.
       outcome = await step.run("complete-no-regen", async () => {

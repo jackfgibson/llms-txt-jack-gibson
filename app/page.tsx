@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRightIcon, GlobeIcon } from "lucide-react";
 import { toast } from "sonner";
+import { addPendingCrawl } from "@/lib/pending-jobs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 
 // A URL is "valid enough" if it contains a dot followed by ≥2 non-separator chars
 // (covers .com, .io, .co.uk, etc.). Protocol prefix is stripped before the check.
@@ -23,9 +29,14 @@ function isValidUrl(raw: string): boolean {
   return /\.[a-zA-Z]{2,}/.test(host);
 }
 
-const FEATURES: Array<{ label: string; href?: string }> = [
+const FEATURES: Array<{ label: string; href?: string; tooltip?: string }> = [
   { label: "Spec-validated output", href: "https://llmstxt.org/#format" },
   { label: "Dynamic crawl configuration" },
+  {
+    label: "Nightly Monitoring",
+    tooltip:
+      "Every night, each registered site is automatically recrawled. If any page content has changed, the llms.txt for every configured model is regenerated, so your AI context files stay fresh without any manual work.",
+  },
 ];
 
 const ALL_PROVIDERS = ["anthropic", "openai", "gemini", "fallback"] as const;
@@ -84,6 +95,8 @@ export default function Home() {
       }
 
       setUrl("");
+      const hostname = new URL(data.site.url).hostname.replace(/^www\./, "");
+      addPendingCrawl({ type: "crawl", crawlId: data.crawlId, siteId: data.site.id, hostname });
       toast("Generation kicked off!", {
         id: "generation-toast",
         description: "Your llms.txt is being generated in the background.",
@@ -91,7 +104,7 @@ export default function Home() {
           label: "View results →",
           onClick: () => router.push("/results"),
         },
-        duration: 8000,
+        duration: 6000,
       });
     } catch {
       setError("Network error — please try again");
@@ -279,6 +292,17 @@ export default function Home() {
                 >
                   {f.label}
                 </a>
+              ) : f.tooltip ? (
+                <HoverCard>
+                  <HoverCardTrigger>
+                    <span className="text-xs text-muted-foreground cursor-default underline decoration-dotted underline-offset-2">
+                      {f.label}
+                    </span>
+                  </HoverCardTrigger>
+                  <HoverCardContent className="w-72 text-sm text-muted-foreground">
+                    {f.tooltip}
+                  </HoverCardContent>
+                </HoverCard>
               ) : (
                 <span className="text-xs text-muted-foreground">{f.label}</span>
               )}

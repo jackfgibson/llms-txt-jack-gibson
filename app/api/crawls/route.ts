@@ -9,12 +9,14 @@ export interface CrawlRun {
   status: string;
   providers: string[];
   submittedAt: string;
+  automated: boolean;
 }
 
 export interface SiteGroup {
   siteId: string;
   hostname: string;
   slug: string;
+  faviconUrl: string | null;
   latest: CrawlRun;
   previousRuns: CrawlRun[];
 }
@@ -25,10 +27,12 @@ export async function GET() {
       crawlId: schema.crawls.id,
       status: schema.crawls.status,
       providers: schema.crawls.providers,
+      automated: schema.crawls.automated,
       submittedAt: schema.crawls.createdAt,
       siteId: schema.sites.id,
       siteUrl: schema.sites.url,
       slug: schema.sites.slug,
+      faviconUrl: schema.sites.faviconUrl,
     })
     .from(schema.crawls)
     .innerJoin(schema.sites, eq(schema.crawls.siteId, schema.sites.id))
@@ -44,6 +48,7 @@ export async function GET() {
       status: r.status,
       providers: r.providers ?? [],
       submittedAt: r.submittedAt.toISOString(),
+      automated: r.automated,
     };
 
     if (!siteMap.has(r.siteId)) {
@@ -51,6 +56,7 @@ export async function GET() {
         siteId: r.siteId,
         hostname: new URL(r.siteUrl).hostname.replace(/^www\./, ""),
         slug: r.slug,
+        faviconUrl: r.faviconUrl ?? null,
         latest: run,
         previousRuns: [],
       });
