@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { removePendingInsight } from "@/lib/pending-jobs";
-import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, DownloadIcon, RefreshCwIcon } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronDownIcon, ChevronRightIcon, ChevronsUpDownIcon, DownloadIcon, ExternalLinkIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import { FaviconImg } from "@/components/favicon-img";
 import { Button } from "@/components/ui/button";
 import {
@@ -183,11 +184,17 @@ function InsightsPageInner() {
   const [sites, setSites] = useState<SiteGroup[]>([]);
   const [sitesLoading, setSitesLoading] = useState(true);
   const [selectedSiteId, setSelectedSiteId] = useState<string>(preselectedSiteId);
-  const [insight, setInsight] = useState<Insight | null | undefined>(undefined);
+  // undefined = loading, [] = none exist
+  const [insights, setInsights] = useState<Insight[] | undefined>(undefined);
+  const [activeInsightId, setActiveInsightId] = useState<string | null>(null);
   const [triggering, setTriggering] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
 
+  const router = useRouter();
   const LLM_PROVIDERS = ["anthropic", "openai", "gemini"];
+
+  // Derived: the insight currently being displayed
+  const activeInsight = insights?.find((i) => i.id === activeInsightId) ?? insights?.[0] ?? null;
 
   // Load all sites, keeping only those whose latest completed crawl used all 3 LLM providers
   useEffect(() => {
@@ -205,31 +212,36 @@ function InsightsPageInner() {
       .catch(() => setSitesLoading(false));
   }, []);
 
-  // Fetch insights when site is selected
-  const fetchInsight = useCallback(async (siteId: string) => {
+  // Fetch all insights for selected site
+  const fetchInsights = useCallback(async (siteId: string) => {
     if (!siteId) return;
-    const res = await fetch(`/api/sites/${siteId}/insights`);
+    const res = await fetch(`/api/sites/${siteId}/insights?all=true`);
     if (!res.ok) return;
-    const data: Insight | null = await res.json();
-    setInsight(data);
-    // If this page is watching and the job finishes, remove from global pending so the poller doesn't double-toast
-    if (data?.status === "completed" || data?.status === "failed") {
+    const data: Insight[] = await res.json();
+    setInsights(data);
+    // If the most recent insight has finished, remove from global pending queue
+    if (data[0]?.status === "completed" || data[0]?.status === "failed") {
       removePendingInsight(siteId);
     }
   }, []);
 
-  // Poll while pending or running
+  // Reset and reload when site changes
   useEffect(() => {
     if (!selectedSiteId) return;
-    setInsight(undefined);
-    fetchInsight(selectedSiteId);
-  }, [selectedSiteId, fetchInsight]);
+    setInsights(undefined);
+    setActiveInsightId(null);
+    setExpandedProviders({});
+    fetchInsights(selectedSiteId);
+  }, [selectedSiteId, fetchInsights]);
 
+  // Poll while the most recent insight is still in-progress
   useEffect(() => {
-    if (insight?.status !== "pending" && insight?.status !== "running") return;
-    const timer = setTimeout(() => fetchInsight(selectedSiteId), 2000);
+    if (!insights?.length) return;
+    const latest = insights[0];
+    if (latest.status !== "pending" && latest.status !== "running") return;
+    const timer = setTimeout(() => fetchInsights(selectedSiteId), 2000);
     return () => clearTimeout(timer);
-  }, [insight, selectedSiteId, fetchInsight]);
+  }, [insights, selectedSiteId, fetchInsights]);
 
   async function handleGenerate() {
     if (!selectedSiteId) return;
@@ -238,18 +250,36 @@ function InsightsPageInner() {
       const res = await fetch(`/api/sites/${selectedSiteId}/insights`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error ?? "Failed to trigger evaluation");
+        toast.error(data.error ?? "Failed to trigger evaluation");
         return;
       }
-      setInsight(data);
+      if (res.status === 200) {
+        // Server returned an existing completed insight — no new crawl to evaluate
+        toast("Already up to date", {
+          description: "Insights are current for this site's most recent crawl.",
+        });
+        return;
+      }
+      // 202 — new insight queued
+      await fetchInsights(selectedSiteId);
+      setActiveInsightId(null); // reset to show the newest pending entry
     } finally {
       setTriggering(false);
     }
   }
 
-  const sortedResults = insight?.evalResults
-    ? [...insight.evalResults].sort((a, b) => b.finalScore - a.finalScore)
+  const sortedResults = activeInsight?.evalResults
+    ? [...activeInsight.evalResults].sort((a, b) => b.finalScore - a.finalScore)
     : [];
+
+  const selectedSite = sites.find((s) => s.siteId === selectedSiteId);
+  const hostname = selectedSite?.hostname ?? "site";
+  // Show "Generate for Most Recent Crawl" only when the latest eligible crawl has no insight yet
+  const hasNewerCrawl =
+    insights !== undefined &&
+    insights.length > 0 &&
+    selectedSite != null &&
+    insights[0].crawlId !== selectedSite.latest.crawlId;
 
   return (
     <div className="flex flex-1 flex-col items-center px-6 py-10 min-h-screen">
@@ -324,10 +354,7 @@ function InsightsPageInner() {
                 {sites.map((s) => (
                   <DropdownMenuItem
                     key={s.siteId}
-                    onClick={() => {
-                      setSelectedSiteId(s.siteId);
-                      setExpandedProviders({});
-                    }}
+                    onClick={() => setSelectedSiteId(s.siteId)}
                     className="flex items-center gap-2"
                   >
                     <FaviconImg src={s.faviconUrl} />
@@ -342,14 +369,16 @@ function InsightsPageInner() {
         {/* Status / action */}
         {selectedSiteId && (
           <div className="space-y-6">
-            {insight === undefined && (
+            {/* Loading */}
+            {insights === undefined && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Spinner className="size-4" />
                 Checking…
               </div>
             )}
 
-            {insight === null && (
+            {/* No insights yet */}
+            {insights?.length === 0 && (
               <div className="space-y-2">
                 <Button onClick={handleGenerate} disabled={triggering} className="gap-2">
                   {triggering && <Spinner className="size-4" />}
@@ -359,47 +388,135 @@ function InsightsPageInner() {
               </div>
             )}
 
-            {(insight?.status === "pending" || insight?.status === "running") && (
-              <div className="space-y-1">
-                <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                  <Spinner className="size-4" />
-                  Evaluating models…
-                </div>
-                <p className="text-xs text-muted-foreground">This may take over a minute.</p>
-              </div>
-            )}
+            {/* Active insight states */}
+            {insights && insights.length > 0 && activeInsight && (
+              <>
+                {(activeInsight.status === "pending" || activeInsight.status === "running") && (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                      <Spinner className="size-4" />
+                      Evaluating models…
+                    </div>
+                    <p className="text-xs text-muted-foreground">This may take over a minute.</p>
+                  </div>
+                )}
 
-            {insight?.status === "failed" && (
-              <div className="space-y-3">
-                <p className="text-sm text-destructive">Evaluation failed.</p>
-                <Button onClick={handleGenerate} disabled={triggering} variant="outline" className="gap-2">
-                  {triggering ? <Spinner className="size-4" /> : <RefreshCwIcon className="size-4" />}
-                  Retry
-                </Button>
-              </div>
-            )}
+                {activeInsight.status === "failed" && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-destructive">Evaluation failed.</p>
+                    <Button onClick={handleGenerate} disabled={triggering} variant="outline" className="gap-2">
+                      {triggering ? <Spinner className="size-4" /> : <RefreshCwIcon className="size-4" />}
+                      Retry
+                    </Button>
+                  </div>
+                )}
 
-            {insight?.status === "completed" && sortedResults.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-sm font-medium">Results</p>
-                {sortedResults.map((result) => (
-                  <ModelRow
-                    key={result.provider}
-                    result={result}
-                    isWinner={result.provider === insight.winner}
-                    expanded={!!expandedProviders[result.provider]}
-                    onToggle={() =>
-                      setExpandedProviders((prev) => ({
-                        ...prev,
-                        [result.provider]: !prev[result.provider],
-                      }))
-                    }
-                    siteId={insight.siteId}
-                    crawlId={insight.crawlId}
-                    hostname={sites.find((s) => s.siteId === insight.siteId)?.hostname ?? "site"}
-                  />
-                ))}
-              </div>
+                {activeInsight.status === "completed" && sortedResults.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Results</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/crawls/${activeInsight.crawlId}`)}
+                        className="gap-1.5"
+                      >
+                        <ExternalLinkIcon className="size-3.5" />
+                        View Associated Crawl
+                      </Button>
+                    </div>
+                    {sortedResults.map((result) => (
+                      <ModelRow
+                        key={result.provider}
+                        result={result}
+                        isWinner={result.provider === activeInsight.winner}
+                        expanded={!!expandedProviders[result.provider]}
+                        onToggle={() =>
+                          setExpandedProviders((prev) => ({
+                            ...prev,
+                            [result.provider]: !prev[result.provider],
+                          }))
+                        }
+                        siteId={activeInsight.siteId}
+                        crawlId={activeInsight.crawlId}
+                        hostname={hostname}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Generate a fresh run — only when a newer crawl exists without an insight */}
+                {hasNewerCrawl && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleGenerate}
+                    disabled={triggering}
+                    className="gap-1.5 self-start"
+                  >
+                    {triggering ? <Spinner className="size-3.5" /> : <SparklesIcon className="size-3.5" />}
+                    Generate Insights for Most Recent Crawl
+                  </Button>
+                )}
+
+                {/* Insights history — shown when there are multiple runs */}
+                {insights.length > 1 && (
+                  <div className="rounded-xl border border-border p-5 space-y-3">
+                    <p className="text-sm font-medium">Insights history</p>
+                    <div className="space-y-1">
+                      {insights.map((ins, i) => {
+                        const runNumber = insights.length - i;
+                        const isCurrent = ins.id === (activeInsightId ?? insights[0].id);
+                        const winnerMeta = ins.winner ? PROVIDER_META[ins.winner] : null;
+                        const winnerScore = ins.evalResults
+                          .find((r) => r.provider === ins.winner)
+                          ?.finalScore;
+                        const date = ins.finishedAt ?? ins.createdAt;
+                        return (
+                          <button
+                            key={ins.id}
+                            onClick={() => {
+                              setActiveInsightId(ins.id);
+                              setExpandedProviders({});
+                            }}
+                            className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-xs transition-colors hover:bg-muted/60 text-left ${isCurrent ? "bg-muted/40" : "text-muted-foreground"}`}
+                          >
+                            <span className={`w-14 shrink-0 tabular-nums ${isCurrent ? "font-semibold text-foreground" : ""}`}>
+                              Run #{runNumber}
+                            </span>
+                            <span className="flex-1 truncate">
+                              {isCurrent && i === 0
+                                ? "This run"
+                                : new Date(date).toLocaleDateString(undefined, {
+                                    month: "short", day: "numeric",
+                                    hour: "2-digit", minute: "2-digit",
+                                  })}
+                            </span>
+                            {ins.status === "completed" && winnerMeta ? (
+                              <span className="flex items-center gap-1 shrink-0">
+                                <img
+                                  src={winnerMeta.logo}
+                                  alt={winnerMeta.label}
+                                  className="w-4 h-4 object-contain"
+                                  style={{ imageRendering: "pixelated" }}
+                                />
+                                <span className={isCurrent ? "text-foreground" : ""}>{winnerMeta.label}</span>
+                                {winnerScore != null && (
+                                  <span className="tabular-nums font-semibold text-foreground ml-1">
+                                    {winnerScore.toFixed(1)}
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="shrink-0 italic">{ins.status}</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

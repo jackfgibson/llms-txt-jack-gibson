@@ -225,9 +225,9 @@ export default function CrawlPage({
           } else {
             setChangeEvent(null);
           }
-          // Fetch current insight status for this site
+          // Fetch insight status scoped to this specific crawl
           if (data.status === "completed") {
-            const insightRes = await fetch(`/api/sites/${data.siteId}/insights`);
+            const insightRes = await fetch(`/api/sites/${data.siteId}/insights?crawlId=${crawlId}`);
             if (insightRes.ok) {
               const insight = await insightRes.json();
               if (insight) {
@@ -257,7 +257,7 @@ export default function CrawlPage({
     if (!crawl?.siteId) return;
     if (insightStatus !== "pending" && insightStatus !== "running") return;
     const timer = setTimeout(async () => {
-      const res = await fetch(`/api/sites/${crawl.siteId}/insights`);
+      const res = await fetch(`/api/sites/${crawl.siteId}/insights?crawlId=${crawlId}`);
       if (!res.ok) return;
       const insight = await res.json();
       if (!insight) return;
@@ -267,7 +267,7 @@ export default function CrawlPage({
       }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [crawl?.siteId, insightStatus]);
+  }, [crawl?.siteId, crawlId, insightStatus]);
 
   async function handleRecheck() {
     if (!crawl || !siteData) return;

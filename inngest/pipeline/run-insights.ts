@@ -231,7 +231,7 @@ export const runInsights = inngest.createFunction(
         provider: p,
         accuracy: accuracyMap[p],
         structurePlacement: placementMap[p],
-        finalScore: round1dp(accuracyMap[p] + STRUCTURE_BOOST[placementMap[p]]),
+        finalScore: Math.min(10.0, round1dp(accuracyMap[p] + STRUCTURE_BOOST[placementMap[p]])),
       }));
 
       const topProvider = finalScores.sort((a, b) => b.finalScore - a.finalScore)[0].provider;
