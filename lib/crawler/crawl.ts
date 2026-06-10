@@ -11,14 +11,17 @@ import type {
 } from "./types";
 
 // HOW_TO_CRAWL.md §4 — a depth-bounded, page-bounded, same-domain crawl.
-// Recursive with batched parallelism (a bounded BFS/DFS hybrid). Single-threaded
-// async, so each "critical section" below is naturally atomic: all shared-state
-// checks + mutations happen synchronously before the next await.
+//
+// Strict level-order BFS. Within a level we fetch in parallel batches (for
+// speed) but COMMIT results in deterministic discovery order — never in
+// fetch-completion order. This makes the committed page SET timing-independent:
+// two runs of the same site select the same pages regardless of network jitter,
+// which is what keeps crawl-to-crawl diffs stable.
 
 const DEFAULTS: Required<CrawlOptions> = {
   maxPages: 20, // DEFAULT_MAX_PAGES
   maxDepth: 3, // DEFAULT_MAX_DEPTH
-  concurrency: 4, // CONCURRENCY — fetches per follow-link batch
+  concurrency: 4, // CONCURRENCY — fetches per batch
   userAgent: "llms-txt-fetcher/0.1",
   requestTimeoutMs: 10_000,
 };
@@ -29,6 +32,13 @@ const ACCEPTABLE_FAILURE_STATUSES = new Set([401, 403, 404, 410]);
 // Hard wall on total crawl time — return whatever we have rather than hang.
 // (Deliberate project decision; not part of the reference spec.)
 const CRAWL_TIME_BUDGET_MS = 60_000;
+
+interface FrontierItem {
+  /** Normalised request URL (query + fragment stripped). */
+  url: string;
+  parentUrl: string | null;
+  depth: number;
+}
 
 export async function crawl(
   originUrl: string,
@@ -51,75 +61,95 @@ export async function crawl(
   const pages: CrawledPage[] = [];
   const failedPages: FailedPage[] = [];
   // A single signal shared by all in-flight fetches. When the budget expires it
-  // fires and aborts every pending fetchPage call immediately — no more waiting
-  // for individual 10s per-request timeouts to drain.
+  // fires and aborts every pending fetchPage call immediately.
   const crawlSignal = AbortSignal.timeout(CRAWL_TIME_BUDGET_MS);
 
-  async function crawlPage(
-    rawUrl: string,
-    parentUrl: string | null,
-    depth: number,
-  ): Promise<void> {
-    const url = normalizeUrl(rawUrl, baseScheme);
-    const key = visitedKey(url);
+  // Homepage seeds depth 0 → it is always committed first → pages[0]
+  // (downstream relies on this).
+  const seedUrl = normalizeUrl(startUrl, baseScheme);
+  visited.add(visitedKey(seedUrl));
+  let frontier: FrontierItem[] = [{ url: seedUrl, parentUrl: null, depth: 0 }];
 
-    // ── critical section (synchronous) ──────────────────────────────────────
-    if (depth > cfg.maxDepth) return;
-    if (crawlSignal.aborted) return;
-    if (visited.has(key)) return;
-    if (pages.length >= internalMaxPages) return;
-    visited.add(key);
-    // ── end critical section ────────────────────────────────────────────────
+  while (
+    frontier.length > 0 &&
+    pages.length < internalMaxPages &&
+    !crawlSignal.aborted
+  ) {
+    const nextFrontier: FrontierItem[] = [];
 
-    let result;
-    try {
-      result = await fetchPage(url, {
-        userAgent: cfg.userAgent,
-        timeoutMs: cfg.requestTimeoutMs,
-        crawlSignal,
-      });
-    } catch (err) {
-      const message = err instanceof SsrfError ? err.message : String(err);
-      failedPages.push({ url, error: message });
-      return;
+    for (const batch of chunk(frontier, cfg.concurrency)) {
+      if (pages.length >= internalMaxPages || crawlSignal.aborted) break;
+
+      // Fetch the batch in parallel. Promise.all preserves array (discovery)
+      // order in its result, regardless of which fetch finishes first.
+      const results = await Promise.all(
+        batch.map(async (item) => {
+          try {
+            const res = await fetchPage(item.url, {
+              userAgent: cfg.userAgent,
+              timeoutMs: cfg.requestTimeoutMs,
+              crawlSignal,
+            });
+            return { item, res, error: null };
+          } catch (err) {
+            const message = err instanceof SsrfError ? err.message : String(err);
+            return { item, res: null, error: message };
+          }
+        }),
+      );
+
+      // Commit in deterministic discovery order — NOT completion order.
+      let capReached = false;
+      for (const r of results) {
+        if (r.res === null) {
+          failedPages.push({ url: r.item.url, error: r.error });
+          continue;
+        }
+        const { status, body, finalUrl } = r.res;
+        if (status < 200 || status > 299) {
+          failedPages.push({ url: r.item.url, status });
+          continue;
+        }
+        if (pages.length >= internalMaxPages) {
+          capReached = true;
+          break;
+        }
+
+        pages.push({
+          url: r.item.url,
+          finalUrl,
+          statusCode: status,
+          depth: r.item.depth,
+          parentUrl: r.item.parentUrl,
+          html: body,
+        });
+
+        // Discover children in deterministic DOM order; enqueue unvisited
+        // same-domain links for the next level. Marking visited at enqueue time
+        // keeps a child claimed by the first (discovery-ordered) page that links
+        // it, so dedup is timing-independent too.
+        if (r.item.depth < cfg.maxDepth) {
+          const $ = cheerio.load(body);
+          for (const link of collectFollowLinks($, finalUrl, baseHost)) {
+            const childUrl = normalizeUrl(link, baseScheme);
+            const key = visitedKey(childUrl);
+            if (!visited.has(key)) {
+              visited.add(key);
+              nextFrontier.push({
+                url: childUrl,
+                parentUrl: r.item.url,
+                depth: r.item.depth + 1,
+              });
+            }
+          }
+        }
+      }
+
+      if (capReached) break;
     }
 
-    const { status, body, finalUrl } = result;
-    if (status < 200 || status > 299) {
-      failedPages.push({ url, status });
-      return;
-    }
-
-    // Parse once, only for link discovery. The full content/meta/Readability
-    // extraction happens later in the pipeline (extractPage) from the retained
-    // raw HTML — doing it here too would parse every page twice for fields
-    // nothing downstream reads.
-    const $ = cheerio.load(body);
-
-    // ── critical section ────────────────────────────────────────────────────
-    if (pages.length >= internalMaxPages) return;
-    pages.push({
-      url,
-      finalUrl,
-      statusCode: status,
-      depth,
-      parentUrl,
-      html: body,
-    });
-    const linksToFollow =
-      depth < cfg.maxDepth && pages.length < internalMaxPages
-        ? collectFollowLinks($, finalUrl, baseHost)
-        : [];
-    // ── end critical section ────────────────────────────────────────────────
-
-    // Crawl children in parallel batches of CONCURRENCY.
-    for (const batch of chunk(linksToFollow, cfg.concurrency)) {
-      await Promise.all(batch.map((link) => crawlPage(link, url, depth + 1)));
-    }
+    frontier = nextFrontier;
   }
-
-  // Homepage is crawled first → it is always pages[0] (downstream relies on this).
-  await crawlPage(startUrl, null, 0);
 
   const error =
     failedPages.length > 0 && !allAuthErrors(failedPages)

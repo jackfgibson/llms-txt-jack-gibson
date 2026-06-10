@@ -79,6 +79,25 @@ describe("diffCrawls", () => {
     expect(result.added).toEqual(["https://a.com/new-page"]);
     expect(result.removed).toEqual(["https://a.com/old-page"]);
   });
+
+  it("matches the same page across URL variance (www / slash / query) — no spurious add+remove", () => {
+    const prev = [{ url: "https://example.com/a", contentHash: "h1" }];
+    const next = [{ url: "https://www.example.com/a/?utm=spring", contentHash: "h1" }];
+    const result = diffCrawls(prev, next);
+    expect(result.unchanged).toEqual(["https://www.example.com/a/?utm=spring"]);
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(result.changed).toEqual([]);
+  });
+
+  it("still reports a real content change under URL variance (not add+remove)", () => {
+    const prev = [{ url: "https://example.com/a", contentHash: "old" }];
+    const next = [{ url: "https://www.example.com/a/", contentHash: "new" }];
+    const result = diffCrawls(prev, next);
+    expect(result.changed).toEqual(["https://www.example.com/a/"]);
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+  });
 });
 
 describe("isMeaningfulChange", () => {

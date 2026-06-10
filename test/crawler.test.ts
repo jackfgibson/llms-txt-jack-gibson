@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as cheerio from "cheerio";
 import {
   normalizeUrl,
@@ -13,7 +13,38 @@ import {
   isJavascriptRendered,
   extractPageMeta,
 } from "@/lib/crawler/parse";
-import { allAuthErrors } from "@/lib/crawler/crawl";
+import { allAuthErrors, crawl } from "@/lib/crawler/crawl";
+
+// Per-test HTTP status overrides for the mocked fetcher, hoisted so the
+// vi.mock factory below can read them.
+const fetchCfg = vi.hoisted(() => ({ statusOverrides: {} as Record<string, number> }));
+
+// Mock the fetcher with a fixed in-memory site graph. Crucially, each fetch
+// resolves after a RANDOM delay so completion order is shuffled every run —
+// proving the crawler commits in deterministic discovery order, not by timing.
+vi.mock("@/lib/crawler/fetcher", () => {
+  const childLinks = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  const homepage = `<html><body>${childLinks
+    .map((s) => `<a href="/${s}">${s}</a>`)
+    .join("")}</body></html>`;
+  return {
+    fetchPage: async (url: string) => {
+      await new Promise((r) => setTimeout(r, Math.random() * 15));
+      const path = new URL(url).pathname;
+      const status = fetchCfg.statusOverrides[path] ?? 200;
+      const body =
+        path === "/"
+          ? homepage
+          : `<html><body><p>content for ${path} ${"lorem ".repeat(40)}</p></body></html>`;
+      return { body, status, finalUrl: url };
+    },
+    clearBodyCache: () => {},
+  };
+});
+
+afterEach(() => {
+  fetchCfg.statusOverrides = {};
+});
 
 // ── URL normalisation (HOW_TO_CRAWL.md §4) ───────────────────────────────────
 
@@ -203,5 +234,53 @@ describe("allAuthErrors", () => {
       ]),
     ).toBe(false);
     expect(allAuthErrors([{ url: "c", error: "connection reset" }])).toBe(false);
+  });
+});
+
+// ── Deterministic page selection (cause #2 of crawl inconsistency) ────────────
+
+describe("crawl determinism", () => {
+  it("selects the same page set across runs despite randomised fetch timing", async () => {
+    const run1 = await crawl("https://t.com/", { maxPages: 3 });
+    const run2 = await crawl("https://t.com/", { maxPages: 3 });
+
+    const expected = [
+      "https://t.com/",
+      "https://t.com/a",
+      "https://t.com/b",
+      "https://t.com/c",
+    ];
+    // maxPages 3 → internal budget 4 (homepage + first 3 children in DOM order).
+    expect(run1.pages.map((p) => p.url)).toEqual(expected);
+    expect(run2.pages.map((p) => p.url)).toEqual(expected);
+  });
+
+  it("keeps the homepage as pages[0] at depth 0", async () => {
+    const res = await crawl("https://t.com/", { maxPages: 3 });
+    expect(res.pages[0].url).toBe("https://t.com/");
+    expect(res.pages[0].depth).toBe(0);
+  });
+
+  it("respects the page cap (maxPages + 1 internal budget)", async () => {
+    const res = await crawl("https://t.com/", { maxPages: 3 });
+    expect(res.pages.length).toBeLessThanOrEqual(4);
+  });
+
+  it("a 404 in the middle does not reduce the committed count below the cap", async () => {
+    fetchCfg.statusOverrides["/a"] = 404;
+    const res = await crawl("https://t.com/", { maxPages: 3 });
+
+    // /a is skipped; the next discovery-ordered successes fill the budget.
+    expect(res.pages.map((p) => p.url)).toEqual([
+      "https://t.com/",
+      "https://t.com/b",
+      "https://t.com/c",
+      "https://t.com/d",
+    ]);
+    expect(
+      res.failedPages.some((f) => f.url === "https://t.com/a" && f.status === 404),
+    ).toBe(true);
+    // 404 alone does not fail the crawl.
+    expect(res.error).toBeNull();
   });
 });

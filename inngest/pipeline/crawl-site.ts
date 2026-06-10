@@ -1,4 +1,4 @@
-import { and, eq, ne, sql, desc, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, ne, sql, asc, desc, isNotNull, isNull } from "drizzle-orm";
 import { inngest } from "../client";
 import { crawlRequested, crawlCompleted } from "../events";
 import { db, schema } from "@/lib/db";
@@ -231,13 +231,17 @@ export const crawlSite = inngest.createFunction(
         .where(eq(schema.generations.siteId, siteId));
       const siteHasGeneration = Number(genCount) > 0;
 
+      // Deterministic ordering so that, if a visitedKey collision ever occurs
+      // within a crawl, diffCrawls' last-write-wins map tie-break is stable.
       const [prevPages, nextPages] = await Promise.all([
         db.select({ url: schema.pages.url, contentHash: schema.pages.contentHash })
           .from(schema.pages)
-          .where(eq(schema.pages.crawlId, prevCrawl.id)),
+          .where(eq(schema.pages.crawlId, prevCrawl.id))
+          .orderBy(asc(schema.pages.url)),
         db.select({ url: schema.pages.url, contentHash: schema.pages.contentHash })
           .from(schema.pages)
-          .where(eq(schema.pages.crawlId, crawlId)),
+          .where(eq(schema.pages.crawlId, crawlId))
+          .orderBy(asc(schema.pages.url)),
       ]);
 
       const diff = diffCrawls(prevPages, nextPages);
