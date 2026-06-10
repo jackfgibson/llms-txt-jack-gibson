@@ -35,6 +35,12 @@ The app is multi-page: **Generate** (submit form), **Results** (crawl history + 
 
 ---
 
+## Architecture
+
+<img width="954" height="1097" alt="crawlAtlasArchitecture" src="https://github.com/user-attachments/assets/0168d884-6464-4442-a6ed-c9bf23bf480b" />
+
+---
+
 ## How it works
 
 A submission (`POST /api/sites`) creates `site` + `crawl` rows and fires a `site/crawl.requested` Inngest event. The durable pipeline (`inngest/pipeline/crawl-site.ts`) then runs as checkpointed, individually-retryable steps:
@@ -259,11 +265,11 @@ The brief's explicit steer was *"correctness first; don't worry about auth; focu
 |---|---|
 | Auth / accounts / multi-tenant | Out of scope per the brief; the app is intentionally single-tenant. |
 | Billing / teams / roles | Same. |
-| Headless (JS) rendering | Static HTML only. JS-shell pages are detected, flagged, and deprioritised — not rendered (that would need persistent workers, not serverless functions). |
+| Headless (JS) rendering | Static HTML only. JS-shell pages are detected, flagged, and deprioritised, not rendered (that would need persistent workers, not serverless functions). |
 | Non-HTML inputs (PDFs, etc.) | The crawler only processes HTML responses. |
 
 ---
 
 ## Scaling note
 
-The current architecture handles dozens of concurrent crawls comfortably. At much larger scale (thousands of sites, high-frequency recrawls) the natural bottleneck is the crawl queue, and the Inngest approach would be complemented by a Postgres `FOR UPDATE SKIP LOCKED` worker pattern, exactly-once dequeue, horizontal worker scaling, no external queue dependency. The `page_descriptions` cache (keyed by `content_hash`) already ensures unchanged pages never re-call the LLM no matter how many workers run in parallel.
+The current architecture handles several concurrent crawls comfortably. At much larger scale (thousands of sites, high-frequency recrawls) the natural bottleneck is the crawl queue, and the Inngest approach would be complemented by a Postgres `FOR UPDATE SKIP LOCKED` worker pattern, exactly-once dequeue, horizontal worker scaling, no external queue dependency. The `page_descriptions` cache (keyed by `content_hash`) already ensures unchanged pages never re-call the LLM no matter how many workers run in parallel.
