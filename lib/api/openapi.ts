@@ -145,7 +145,7 @@ export const SiteGroupSchema = registry.register(
 export const GetCrawlResponseSchema = registry.register(
   "GetCrawlResponse",
   CrawlSchema.extend({
-    reusedGeneration: z.boolean().openapi({ description: "True when a no-change recrawl reused the site's existing latest generation" }),
+    reusedGeneration: z.boolean().openapi({ description: "True when a no-change recrawl reused the version that was live at the time of the crawl" }),
     generations: z.array(CrawlGenerationSchema),
   }),
 );

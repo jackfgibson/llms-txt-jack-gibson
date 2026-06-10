@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, desc } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -26,24 +26,34 @@ export async function GET(
     .from(schema.generations)
     .where(eq(schema.generations.crawlId, id));
 
-  // A recrawl that detected no meaningful change produces no new generation. Fall
-  // back to the site's latest version so the page still shows the live file, and
-  // flag it so the UI can explain that nothing was regenerated.
+  // A recrawl that detected no meaningful change produces no new generation. Show
+  // the version that was live AT THE TIME of this crawl — the most recent
+  // generation created at or before this crawl finished — and flag it so the UI
+  // can explain that nothing was regenerated. (Using max(version) would wrongly
+  // surface a NEWER version produced by a LATER crawl that did find changes.)
   let reusedGeneration = false;
   if (generations.length === 0 && crawl.status === "completed") {
-    const [{ maxVersion }] = await db
-      .select({ maxVersion: sql<number>`coalesce(max(version), 0)` })
+    const cutoff = crawl.finishedAt ?? crawl.createdAt;
+    const [prior] = await db
+      .select({ version: schema.generations.version })
       .from(schema.generations)
-      .where(eq(schema.generations.siteId, crawl.siteId));
+      .where(
+        and(
+          eq(schema.generations.siteId, crawl.siteId),
+          lte(schema.generations.createdAt, cutoff),
+        ),
+      )
+      .orderBy(desc(schema.generations.version))
+      .limit(1);
 
-    if (maxVersion > 0) {
+    if (prior) {
       generations = await db
         .select()
         .from(schema.generations)
         .where(
           and(
             eq(schema.generations.siteId, crawl.siteId),
-            eq(schema.generations.version, maxVersion),
+            eq(schema.generations.version, prior.version),
           ),
         );
       reusedGeneration = true;

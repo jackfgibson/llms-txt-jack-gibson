@@ -40,8 +40,8 @@ interface Crawl {
   providers: string[] | null;
   createdAt: string;
   finishedAt: string | null;
-  generations: Generation[]; // crawl-specific, or the site's latest if not regenerated
-  reusedGeneration?: boolean; // true when a recrawl found no change and kept the live file
+  generations: Generation[]; // crawl-specific, or the version live at this crawl's time if not regenerated
+  reusedGeneration?: boolean; // true when a recrawl found no change and reused the then-current version
 }
 
 interface Generation {
@@ -653,8 +653,7 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
         {/* Carried-over notice — recrawl with no meaningful change */}
         {crawl?.status === "completed" && crawl.reusedGeneration && generations.length > 0 && (
           <p className="text-xs text-muted-foreground">
-            No content changes since the last crawl — showing the current live version
-            {generations[0]?.version ? ` (v${generations[0].version})` : ""}.
+            No content changes since the last crawl, showing the nearest previous version that had changes.
           </p>
         )}
 
