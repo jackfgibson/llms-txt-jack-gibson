@@ -45,7 +45,7 @@ type Provider = (typeof ALL_PROVIDERS)[number];
 const PROVIDER_META: Record<Provider, { logo: string; label: string; model: string }> = {
   anthropic: { logo: "/providers/claude.png",   label: "Claude",   model: "claude-haiku-4-5-20251001" },
   openai:    { logo: "/providers/openai.png",    label: "GPT",      model: "gpt-4o-mini" },
-  gemini:    { logo: "/providers/gemini.png",    label: "Gemini",   model: "gemini-2.0-flash" },
+  gemini:    { logo: "/providers/gemini.png",    label: "Gemini",   model: "gemini-3-flash-preview" },
   fallback:  { logo: "/providers/fallback.png",  label: "Non-LLM",  model: "deterministic flow" },
 };
 
@@ -136,7 +136,7 @@ export default function Home() {
               Generate <code className="font-mono text-2xl">llms.txt</code> for any site
             </h1>
             <p className="text-sm text-muted-foreground">
-              Crawls any site, curates the key pages, and produces a spec-valid file in seconds.
+              Crawls any site, curates the key pages, and produces a spec-valid file.
             </p>
           </div>
         </div>

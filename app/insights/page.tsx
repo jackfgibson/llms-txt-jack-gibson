@@ -332,7 +332,7 @@ function InsightsPageInner() {
             <h1 className="text-2xl font-semibold tracking-tight">Model Insights</h1>
             <p className="text-sm text-muted-foreground">
               Compare how Claude, GPT-4o, and Gemini perform on accuracy and structure for a given site.
-              Requires latest crawl performed with all 3 LLM providers.
+              Requires latest crawl to be performed with all 3 LLM providers.
             </p>
           </div>
           <Collapsible>
