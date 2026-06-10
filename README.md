@@ -6,6 +6,7 @@
 
 Paste a website URL and get back a spec-conforming [`llms.txt`](https://llmstxt.org) file which has been crawled, curated, and grounded in real page content. The file is served at a stable public URL, kept fresh by a nightly monitor, and (optionally) benchmarked across three different LLMs.
 
+<img width="1808" height="988" alt="Screenshot 2026-06-10 140015" src="https://github.com/user-attachments/assets/554eebfa-2d05-40fc-a3a1-13e26a387cc4" />
 
 ---
 
@@ -15,8 +16,13 @@ Paste a website URL and get back a spec-conforming [`llms.txt`](https://llmstxt.
 2. **Curates** the most useful pages by classifying and scoring each by type, depth, inlink count, and content quality, then groups them into H2 sections.
 3. **Generates** descriptions grounded in each page's actual content (**never invented**). Pick any subset of providers per run: **Claude Haiku, GPT-4o mini, Gemini 3 Flash, and a no-LLM fallback** and each produces its own `llms.txt`, shown side by side as tabs.
 4. **Conforms to the [llmstxt.org spec](https://llmstxt.org/#format) by construction**.
+
+<img width="1147" height="822" alt="Screenshot 2026-06-10 140318" src="https://github.com/user-attachments/assets/00067337-2441-43d7-8905-466fe9e14115" />
+
 5. **Monitors** every site automatically: on its first successful generation a site is enrolled in a nightly (03:00 UTC) re-crawl. A diff engine compares page content hashes across runs and **regenerates only when something meaningful changed**. A manual **"Re-crawl now"** button triggers the same flow on demand.
 6. **Compares models (Insights)**: when a crawl runs all three LLM providers, an on-demand Insights run benchmarks them: each model answers factual questions about the site (drawn from the *other* models' files) and votes on which file is best-structured; an LLM grader scores accuracy, a structure boost is applied, and a winner is crowned 👑.
+
+<img width="1082" height="994" alt="Screenshot 2026-06-10 140430" src="https://github.com/user-attachments/assets/2769a354-5542-46e4-a1c5-7c8adc444e40" />
 
 The app is multi-page: **Generate** (submit form), **Results** (crawl history + the generated files), **Insights** (model benchmark), and **Why?** (project rationale).
 
@@ -62,6 +68,8 @@ Schema in `lib/db/schema.ts`. Nine tables:
 ---
 
 ## API & docs
+
+[Swagger UI](https://www.crawlatlas.dev/api/docs/ui)
 
 REST routes live under `app/api/` (sites, crawls, generations, insights, the Inngest serve handler, and the public llms.txt serve). Every route is documented via OpenAPI/Swagger, registered in `lib/api/openapi.ts` and served at **`/api/docs`** (JSON) and **`/api/docs/ui`** (interactive).
 
