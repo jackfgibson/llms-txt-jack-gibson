@@ -250,17 +250,21 @@ export const crawlSite = inngest.createFunction(
       // to serve yet (e.g. a prior generation failed).
       const shouldGenerate = meaningful || !siteHasGeneration;
 
-      // Idempotent across retries via the unique index on (to_crawl_id).
-      await db
-        .insert(schema.changeEvents)
-        .values({
-          siteId,
-          fromCrawlId: prevCrawl.id,
-          toCrawlId: crawlId,
-          diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
-          regenerated: shouldGenerate,
-        })
-        .onConflictDoNothing();
+      // A no-change recrawl is discarded entirely (below), so only record a
+      // change_event when this run regenerates. Idempotent across retries via
+      // the unique index on (to_crawl_id).
+      if (shouldGenerate) {
+        await db
+          .insert(schema.changeEvents)
+          .values({
+            siteId,
+            fromCrawlId: prevCrawl.id,
+            toCrawlId: crawlId,
+            diff: { added: diff.added, removed: diff.removed, changed: diff.changed },
+            regenerated: shouldGenerate,
+          })
+          .onConflictDoNothing();
+      }
 
       return { shouldGenerate };
     });
@@ -428,25 +432,16 @@ export const crawlSite = inngest.createFunction(
         });
       }
     } else {
-      // No meaningful change — keep the existing live generation, just complete.
-      outcome = await step.run("complete-no-regen", async () => {
-        await db
-          .update(schema.crawls)
-          .set({ status: "completed", finishedAt: new Date(), progress: { phase: "completed" } })
-          .where(eq(schema.crawls.id, crawlId));
-
-        const [latest] = await db
-          .select()
-          .from(schema.generations)
-          .where(eq(schema.generations.siteId, siteId))
-          .orderBy(desc(schema.generations.version))
-          .limit(1);
-
-        return {
-          generationIds: latest ? [latest.id] : [],
-          version: latest?.version ?? 0,
-        };
+      // No meaningful change — don't record that this crawl ever happened.
+      // Deleting the row cascades to its pages; the previous crawl and its
+      // generation stay live (and remain the diff baseline for the next run,
+      // with identical content). The watching UI treats a 404 on a crawl it
+      // saw running as "no changes found". Delete is idempotent across retries.
+      await step.run("discard-no-changes", async () => {
+        await db.delete(schema.crawls).where(eq(schema.crawls.id, crawlId));
       });
+
+      return { crawlStats, generationIds: [], regenerated: false };
     }
 
     await step.sendEvent("crawl-completed", {

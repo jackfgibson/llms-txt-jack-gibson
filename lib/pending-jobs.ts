@@ -15,6 +15,10 @@ export type PendingJob = PendingCrawlJob | PendingInsightJob;
 
 const KEY = "crawlatlas_pending_jobs";
 
+// Fired on window whenever the pending list changes, so UI (e.g. the sidebar
+// spinners) can react immediately instead of waiting for a poll tick.
+export const PENDING_JOBS_EVENT = "crawlatlas:pending-jobs-changed";
+
 export function getPendingJobs(): PendingJob[] {
   if (typeof window === "undefined") return [];
   try {
@@ -26,6 +30,7 @@ export function getPendingJobs(): PendingJob[] {
 
 function save(jobs: PendingJob[]) {
   localStorage.setItem(KEY, JSON.stringify(jobs));
+  window.dispatchEvent(new Event(PENDING_JOBS_EVENT));
 }
 
 export function addPendingCrawl(job: PendingCrawlJob) {

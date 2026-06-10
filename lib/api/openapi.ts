@@ -277,6 +277,30 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/{slug}/llms.txt",
+  summary: "Publicly serve a site's newest llms.txt",
+  description:
+    "Serves the newest generated version. Without ?provider=, picks deterministically among the newest version's provider rows (prefers LLM output over fallback, then Claude → GPT → Gemini). With ?provider=, serves that provider's newest file.",
+  tags: ["Public"],
+  request: {
+    params: z.object({ slug: z.string().openapi({ description: "Site slug derived from hostname" }) }),
+    query: z.object({
+      provider: z
+        .enum(["anthropic", "openai", "gemini", "fallback"])
+        .optional()
+        .openapi({ description: "Pin the response to one provider's newest llms.txt" }),
+    }),
+  },
+  responses: {
+    200: { description: "Raw llms.txt", content: { "text/plain": { schema: z.string() } } },
+    202: { description: "Site exists but nothing generated yet", content: { "text/plain": { schema: z.string() } } },
+    400: { description: "Unknown provider value", content: { "text/plain": { schema: z.string() } } },
+    404: { description: "Unknown slug, or no generation by the requested provider", content: { "text/plain": { schema: z.string() } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/crawls",
   summary: "List sites with their crawl history (newest first), grouped by site",
   tags: ["Crawls"],
@@ -293,7 +317,7 @@ registry.registerPath({
   request: { params: z.object({ id: z.string().uuid() }) },
   responses: {
     200: { description: "Crawl details", content: { "application/json": { schema: GetCrawlResponseSchema } } },
-    404: { description: "Crawl not found", content: { "application/json": { schema: ErrorSchema } } },
+    404: { description: "Crawl not found — never existed, or was a recrawl that found no content changes (such crawls are discarded, not recorded)", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 

@@ -23,6 +23,17 @@ export function JobPoller() {
         if (job.type === "crawl") {
           try {
             const res = await fetch(`/api/crawls/${job.crawlId}`);
+            if (res.status === 404) {
+              // The pipeline deletes (never records) a recrawl that found no
+              // content changes, so a pending crawl that 404s means "no changes".
+              removePendingCrawl(job.crawlId);
+              toast(`No changes found for ${job.hostname}`, {
+                id: `crawl-${job.crawlId}`,
+                description: "Site content is unchanged since the last crawl, so nothing was recorded.",
+                duration: 8000,
+              });
+              continue;
+            }
             if (!res.ok) continue;
             const data = await res.json();
             if (data.status === "completed") {

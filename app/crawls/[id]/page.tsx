@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import { useRouter } from "next/navigation";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, DownloadIcon, ExternalLinkIcon, MoreHorizontalIcon, RefreshCwIcon, SparklesIcon, TelescopeIcon } from "lucide-react";
 import { FaviconImg } from "@/components/favicon-img";
-import { addPendingCrawl, addPendingInsight, removePendingCrawl, removePendingInsight } from "@/lib/pending-jobs";
+import { addPendingCrawl, addPendingInsight, getPendingJobs, removePendingCrawl, removePendingInsight } from "@/lib/pending-jobs";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -180,7 +180,7 @@ function GenerationPanel({
             </Button>
             {slug && isLatest && (
               <a
-                href={`/${slug}/llms.txt`}
+                href={`/${slug}/llms.txt?provider=${generation.provider}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
@@ -224,6 +224,8 @@ export default function CrawlPage({
   // not when opening an already-finished crawl.
   const prevStatusRef = useRef<Crawl["status"] | null>(null);
   const hostnameRef = useRef<string | null>(null);
+  // Ref mirror of siteData so the long-lived poll closure sees fresh values.
+  const siteDataRef = useRef<SiteData | null>(null);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -232,6 +234,31 @@ export default function CrawlPage({
     async function poll() {
       try {
         const res = await fetch(`/api/crawls/${crawlId}`);
+        if (res.status === 404) {
+          // The pipeline deletes (never records) a recrawl that found no
+          // content changes — so a 404 on a crawl we watched running, or that
+          // is still in the pending-jobs list, means "no changes found".
+          const sawRunning =
+            prevStatusRef.current === "pending" ||
+            prevStatusRef.current === "crawling" ||
+            prevStatusRef.current === "generating";
+          const hadPending = getPendingJobs().some(
+            (j) => j.type === "crawl" && j.crawlId === crawlId,
+          );
+          if (sawRunning || hadPending) {
+            removePendingCrawl(crawlId);
+            toast(`No changes found for ${hostnameRef.current ?? "site"}`, {
+              id: `crawl-${crawlId}`,
+              description: "Site content is unchanged since the last crawl, so nothing was recorded.",
+              duration: 8000,
+            });
+            const prevCompleted = siteDataRef.current?.recentCrawls.find(
+              (c) => c.id !== crawlId && c.status === "completed",
+            );
+            router.replace(prevCompleted ? `/crawls/${prevCompleted.id}` : "/results");
+          }
+          return;
+        }
         if (!res.ok) return;
         const data: Crawl = await res.json();
         const wasRunning =
@@ -249,6 +276,7 @@ export default function CrawlPage({
           if (siteRes.ok) {
             const sd: SiteData = await siteRes.json();
             setSiteData(sd);
+            siteDataRef.current = sd;
             hostnameRef.current = new URL(sd.site.url).hostname.replace(/^www\./, "");
           }
         }
@@ -261,6 +289,7 @@ export default function CrawlPage({
           if (siteRes.ok) {
             const sd: SiteData = await siteRes.json();
             setSiteData(sd);
+            siteDataRef.current = sd;
             hostnameRef.current = new URL(sd.site.url).hostname.replace(/^www\./, "");
           }
           // Toast only when this page watched the crawl run to completion.
@@ -310,7 +339,7 @@ export default function CrawlPage({
 
     poll();
     return () => clearTimeout(timer);
-  }, [crawlId]);
+  }, [crawlId, router]);
 
   // Poll insight status while it is in-progress (crawl poll has already stopped by this point)
   useEffect(() => {
@@ -611,7 +640,7 @@ const PROVIDER_ORDER = ["anthropic", "openai", "gemini", "fallback"];
                 <TooltipContent side="bottom" className="max-w-64 text-center">
                   Re-crawls the site. If the crawler reaches different pages, or a
                   previously reached page&apos;s content has changed, the llms.txt
-                  files are regenerated.
+                  files are regenerated. If nothing changed, the run is discarded.
                 </TooltipContent>
               </Tooltip>
             </div>
