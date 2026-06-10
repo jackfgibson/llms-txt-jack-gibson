@@ -37,15 +37,33 @@ export async function POST(req: NextRequest) {
   const origin = new URL(parsed.data.url).origin;
 
   // Fast reachability probe — fail before touching the DB if the site is unreachable.
+  // Try HEAD first (no body transfer); fall back to GET if the server rejects HEAD.
   try {
     const { safeFetch } = await import("@/lib/url/ssrf");
-    const probe = await safeFetch(
+    const UA = { "User-Agent": "llms-txt-fetcher/0.1" };
+    let status: number;
+
+    const head = await safeFetch(
       origin,
-      { headers: { "User-Agent": "llms-txt-fetcher/0.1" }, signal: AbortSignal.timeout(10_000) },
+      { method: "HEAD", headers: UA, signal: AbortSignal.timeout(10_000) },
       3,
     );
-    void probe.body?.cancel();
-    if (probe.status === 404 || probe.status >= 500) {
+    void head.body?.cancel();
+
+    if (head.status === 405 || head.status === 501) {
+      // Server doesn't support HEAD — fall back to GET and discard body.
+      const get = await safeFetch(
+        origin,
+        { headers: UA, signal: AbortSignal.timeout(10_000) },
+        3,
+      );
+      void get.body?.cancel();
+      status = get.status;
+    } else {
+      status = head.status;
+    }
+
+    if (status === 404 || status >= 500) {
       return NextResponse.json({ error: "Site Unreachable" }, { status: 422 });
     }
   } catch {
