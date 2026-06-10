@@ -1,22 +1,20 @@
-# Crawl Atlas — Automated `llms.txt` Generator
+# Crawl Atlas: An Automated `llms.txt` Generator
 
 **Live demo:** [crawlatlas.dev](https://crawlatlas.dev)
 
-Paste any website URL and get back a spec-conforming [`llms.txt`](https://llmstxt.org) file in seconds — crawled, curated, and grounded in real page content. The file is served at a stable public URL, kept fresh by a nightly monitor, and (optionally) benchmarked across three different LLMs.
+Paste a website URL and get back a spec-conforming [`llms.txt`](https://llmstxt.org) file which has been crawled, curated, and grounded in real page content. The file is served at a stable public URL, kept fresh by a nightly monitor, and (optionally) benchmarked across three different LLMs.
 
-This is the single source of truth for the project: what it does, how it's built, how to run it, and the deliberate scope decisions behind it.
 
 ---
 
 ## What it does
 
-1. **Crawls** the site with a bounded, same-origin BFS that follows in-page links from the homepage — depth- and page-capped, SSRF-guarded, with a total time budget.
-2. **Curates** the most useful pages — classifies and scores each by type, depth, inlink count, and content quality, then groups them into H2 sections.
-3. **Generates** descriptions grounded in each page's actual content (**never invented**). Pick any subset of providers per run — **Claude Haiku, GPT-4o mini, Gemini Flash, and a no-LLM fallback** — and each produces its own `llms.txt`, shown side by side as tabs.
-4. **Conforms to the [llmstxt.org spec](https://llmstxt.org/#format) by construction** — every file is a single H1, an optional summary blockquote, and `[name](url)` bullet lists grouped under H2 sections (`## Optional` last).
-5. **Serves** the result at a stable public URL: `https://crawlatlas.dev/<slug>/llms.txt` (`text/plain`, auto-updating).
-6. **Monitors** every site automatically — on its first successful generation a site is enrolled in a nightly (03:00 UTC) re-crawl. A diff engine compares page content hashes across runs and **regenerates only when something meaningful changed**. A manual **"Re-crawl now"** button triggers the same flow on demand.
-7. **Compares models (Insights)** — when a crawl runs all three LLM providers, an on-demand Insights run benchmarks them: each model answers factual questions about the site (drawn from the *other* models' files) and votes on which file is best-structured; an LLM grader scores accuracy, a structure boost is applied, and a winner is crowned 👑.
+1. **Crawls** the site with a bounded, same-origin BFS that follows in-page links from the homepage with depth and total page caps, has SSRF guarding, and a total time budget.
+2. **Curates** the most useful pages by classifying and scoring each by type, depth, inlink count, and content quality, then groups them into H2 sections.
+3. **Generates** descriptions grounded in each page's actual content (**never invented**). Pick any subset of providers per run: **Claude Haiku, GPT-4o mini, Gemini 3 Flash, and a no-LLM fallback** and each produces its own `llms.txt`, shown side by side as tabs.
+4. **Conforms to the [llmstxt.org spec](https://llmstxt.org/#format) by construction**.
+5. **Monitors** every site automatically: on its first successful generation a site is enrolled in a nightly (03:00 UTC) re-crawl. A diff engine compares page content hashes across runs and **regenerates only when something meaningful changed**. A manual **"Re-crawl now"** button triggers the same flow on demand.
+6. **Compares models (Insights)**: when a crawl runs all three LLM providers, an on-demand Insights run benchmarks them: each model answers factual questions about the site (drawn from the *other* models' files) and votes on which file is best-structured; an LLM grader scores accuracy, a structure boost is applied, and a winner is crowned 👑.
 
 The app is multi-page: **Generate** (submit form), **Results** (crawl history + the generated files), **Insights** (model benchmark), and **Why?** (project rationale).
 
@@ -26,16 +24,14 @@ The app is multi-page: **Generate** (submit form), **Results** (crawl history + 
 
 | Layer | Choice |
 |---|---|
-| App | Next.js 16 (App Router) · React 19 · TypeScript — all crawl/job/API handlers run on the **Node runtime** (`export const runtime = "nodejs"`) for DNS + HTML parsing |
-| UI | shadcn/ui · Tailwind v4 · `next-themes` (dark mode) · `sonner` toasts |
-| Database | Neon serverless Postgres via `@neondatabase/serverless` (HTTP driver) |
-| ORM / migrations | Drizzle + drizzle-kit (migrations committed under `drizzle/`) |
+| App | Next.js 16 (App Router) · React 19 · TypeScript |
+| UI | shadcn/ui · Tailwind v4|
+| Database | Neon serverless Postgres (18) via `@neondatabase/serverless` (HTTP driver) |
+| ORM / migrations | Drizzle + drizzle-kit |
 | Jobs + cron | Inngest (durable, retry-safe step pipeline) |
-| LLM | Anthropic (`@anthropic-ai/sdk`, default) · OpenAI · Gemini — all behind one `callWithTool` helper using tool-use + Zod validation |
+| LLM | Anthropic (`@anthropic-ai/sdk`, default) · OpenAI · Gemini + Zod validation |
 | Crawl / parse | `cheerio` · `@mozilla/readability` + `linkedom` · `p-limit` |
 | Tests / docs | Vitest · OpenAPI via `@asteasolutions/zod-to-openapi` |
-
-All real logic lives in framework-agnostic `lib/*` modules; route handlers and Inngest functions are thin wrappers that call into them.
 
 ---
 
@@ -49,8 +45,8 @@ mark-crawling          status = crawling
 crawl-extract-persist  crawl (same-origin BFS, SSRF-guarded) → extract metadata +
                        Readability + content_hash → store favicon → insert pages
 curate                 classify + score + select top pages, group into H2 sections
-decide-regen           diff vs. previous completed crawl → write change_event;
-                       decide whether this run regenerates
+decide-regen           diff vs. previous completed crawl → decide whether this
+                       run regenerates; if so, write a change_event
 ── only if regenerating ──
 mark-generating        status = generating
 generate               for EACH selected provider, in parallel: tool-use LLM
@@ -59,30 +55,26 @@ persist-generation     one generations row per provider (shared version) → com
                        auto-enroll the site in the daily cron
 generate-questions     if all 3 LLM providers ran: silently seed 2 Q&A pairs/model
 ── otherwise ──
-complete-no-regen      mark completed; keep serving the existing live generation
+discard-no-changes     delete the crawl row entirely (a no-change recrawl is never
+                       recorded); the UI toasts "no changes found" and the previous
+                       crawl + generation stay live
 ```
 
-**Why Inngest?** A crawl can take 30–120s, well past a serverless timeout. Inngest breaks the work into durable steps — each is checkpointed and retried independently, and the whole function survives crashes. This is what makes the pipeline idempotent: writes are keyed by `crawl_id` (plus unique indexes), so a retried step never double-appends or creates a duplicate version.
+**Why Inngest?** A crawl can sometimes take more time than a serverless timeout would allow. Inngest breaks the work into durable steps where each is checkpointed and retried independently, and the whole function survives crashes. This is what makes the pipeline idempotent: writes are keyed by `crawl_id` (plus unique indexes), so a retried step never double-appends or creates a duplicate version.
 
 **Why Neon?** Serverless Postgres scales to zero between requests. The `@neondatabase/serverless` HTTP driver runs one-shot queries with no connection-pool management in app code (PgBouncer pooling lives at the Neon `-pooler` hostname).
 
-The UI polls `GET /api/crawls/:id` (~1s) for live progress, and the public `GET /<slug>/llms.txt` always serves the site's latest generation.
+The UI polls `GET /api/crawls/:id` (~1s) for live progress, and the public `GET /<slug>/llms.txt` always serves the site's latest generation (prefers LLM output, then Claude → GPT → Gemini). Append `?provider=anthropic|openai|gemini|fallback` to pin the response to one provider's newest file, the per-model "Live URL" links in the UI use this.
 
-### The pipeline stages
+### Pipeline stages
 
-**Crawler (`lib/crawler/`).** A depth- and page-bounded, same-origin BFS starting from the homepage and following in-page `<a href>` links — no sitemap, no robots gating. Defaults: max pages **20** (UI range 5–50), max depth **3** (range 1–3), concurrency **4**, ~10s per request, and a hard **60s total time budget** (a slow site degrades to partial results rather than failing). Dedup is scheme/`www`/trailing-slash agnostic. The homepage is excluded from the output, so the crawler internally fetches one extra page (`maxPages + 1`). Crawl failures are lenient: auth/not-found responses (401/403/404/410) alone don't fail the crawl; only a crawl that yields **zero** usable pages does.
-
-**SSRF guard (`lib/url/ssrf.ts`, tested in `test/ssrf.test.ts`).** Every outbound fetch goes through `safeFetch`, which allows only http/https, resolves the hostname, and rejects loopback / private / link-local / reserved ranges (IPv4 + IPv6) and the cloud metadata IP `169.254.169.254`. Crucially it **re-validates the resolved IP before following every redirect** (`redirect: "manual"`), closing the classic DNS-rebinding / TOCTOU bypass.
-
-**Extractor (`lib/extract/`, tested in `test/extract.test.ts`).** From each page's raw HTML: `title`, `meta description`, all `og:*`, `canonical`, `lang`, first `h1`, and Readability-extracted `main_text`. `content_hash` is the SHA-256 of `main_text`, computed **only when it's ≥ 300 chars** (thin shells are left `null` so they don't collide on one hash). `is_js_shell` fires on multiple SPA signals (thin body, framework globals, generator meta tag, empty mount div). The homepage's favicon is also extracted and stored.
-
-**Curator (`lib/curate/`, tested in `test/curate.test.ts`).** Classifies each page (`home | docs | api | product | about | blog | pricing | legal | other`) by depth, URL path regexes, then keyword fallback. Scores by type weight, depth penalty, inlink count, presence of title/description, and text length; JS-shells with no title/description are dropped. Pages are grouped into ordered H2 sections. When an LLM key is present, section grouping is handed to the model (`lib/llm/group.ts`) — 2–6 natural section names with a homepage "Overview" first and "Optional" last — falling back to the deterministic classifier ordering if the call fails.
-
-**Generation (`lib/llmstxt/` + `lib/llm/`).** Each selected provider runs in parallel and produces its own file. Per-page descriptions are generated via the shared `callWithTool` helper (tool-use + Zod validation, one retry on a malformed response) and are **grounded only in that page's content** — the source snippet is stored as `provenance`, and a page with no usable content gets no description rather than a fabricated one. Descriptions are cached by `content_hash` in `page_descriptions`, so an unchanged page skips the LLM entirely — even across re-crawls. With no API key at all, the **fallback** path uses meta descriptions / first sentences (`mode = "fallback"`) and still emits a spec-valid file. Spec conformance is guaranteed **by construction**: the generator only ever emits a single H1, an optional blockquote, and `- [name](url): notes` bullets under H2 sections — so there is no separate post-hoc validator to drift out of sync.
-
-**Monitoring (`lib/monitor/diff.ts`, tested in `test/monitor.test.ts`).** `diffCrawls` compares two snapshots by `url` + `content_hash` into `added / removed / changed / unchanged`; `isMeaningfulChange` is true if any of the first three is non-empty. The diff runs in `decide-regen` **before** generation, so an unchanged recrawl skips the LLM and keeps serving the existing file. The `change_events` write is idempotent (unique on `to_crawl_id`). The first crawl of a site always generates.
-
-**Insights (`inngest/pipeline/run-insights.ts` + `lib/llm/`).** When a crawl uses all three LLM providers, each model silently writes 2 factual Q&A pairs about its own file. On demand (`POST /api/sites/:id/insights`), `run-insights` has each model answer the **other two** models' 4 questions using its own file and vote on which of the other two files is better structured. A grader LLM scores each answer 0.0–2.5 (Accuracy = sum, max 10.0); structure votes are tallied into a boost (1st = "Excellent" +0.8, 2nd = "Great" +0.4, 3rd = "Good" +0.0). Final score = Accuracy + boost; highest wins and earns 👑 on its tab.
+- **Crawler**: same-origin BFS from the homepage, bounded by max pages (5–50, default 20), max depth (1–3), and a 60s total time budget. Dedup is scheme/`www`/trailing-slash agnostic. Failures are lenient: only a crawl with zero usable pages fails.
+- **SSRF guard**: every outbound fetch resolves the hostname and rejects private/loopback/link-local ranges and the cloud metadata IP. Re-validates the resolved IP after every redirect to close DNS-rebinding bypasses.
+- **Extractor**: pulls `title`, `meta description`, OG tags, Readability `main_text`, and a SHA-256 `content_hash` from each page. Detects JS shells (SPA pages with no real content).
+- **Curator**: classifies and scores each page by type, depth, inlink count, and content quality. Drops JS shells with no metadata. Groups pages into H2 sections (via LLM if a key is present, deterministic fallback otherwise).
+- **Generation**: each selected provider runs in parallel via a shared `callWithTool` helper (tool-use + Zod validation). Descriptions are grounded in page content and cached by `content_hash` so unchanged pages skip the LLM. No API key? The fallback path uses meta descriptions and still emits a spec-valid file.
+- **Monitoring**: diffs page `content_hash` snapshots across recrawls. If nothing meaningful changed, the crawl is discarded entirely (no history row, UI toasts "no changes found"). Regenerates only when needed.
+- **Insights**: when all three LLM providers ran, each model answers the other models' factual questions about their files and votes on structure. A grader scores accuracy; structure votes add a boost. Highest total score wins 👑.
 
 ---
 
@@ -96,7 +88,7 @@ Schema in `lib/db/schema.ts`. Nine tables:
 | `crawls` | One row per crawl attempt: `status` (`pending\|crawling\|generating\|completed\|failed`), `mode` (`initial\|recrawl`), requested `providers[]`, `stats`/`progress` jsonb, `automated` flag. |
 | `pages` | One row per crawled page: extracted metadata, `content_hash`, classified `page_type`, curation `score`, `inlink_count`, `is_js_shell`. Unique on `(crawl_id, url)`. |
 | `generations` | One row per file **per provider**: `version` (monotonic per site, shared across a crawl's provider rows), `content`, `mode` (`llm\|fallback`), `provider`. Unique on `(site_id, version, provider)`. |
-| `change_events` | Written on a re-crawl with meaningful changes: `from_crawl_id`, `to_crawl_id`, `diff` jsonb, `regenerated`. Unique on `to_crawl_id`. |
+| `change_events` | Written only on a re-crawl that regenerates: `from_crawl_id`, `to_crawl_id`, `diff` jsonb, `regenerated`. Unique on `to_crawl_id`. (No-change recrawls are discarded and leave no row anywhere.) |
 | `page_descriptions` | Description cache keyed by `content_hash` (pk): `description`, grounding `provenance`. |
 | `model_questions` | Silent per-model Q&A pairs seeded during an all-3-provider crawl. Unique on `generation_id`. |
 | `insights` | One on-demand benchmark run per `(site_id, crawl_id)`: `status`, `winner`. |
@@ -127,7 +119,7 @@ REST routes live under `app/api/` (sites, crawls, generations, insights, the Inn
 
 ## Prerequisites
 
-You need accounts (all have free tiers) and their credentials:
+You need accounts and their credentials:
 
 | Service | Purpose | Free tier |
 |---|---|---|
@@ -138,7 +130,7 @@ You need accounts (all have free tiers) and their credentials:
 | [OpenAI](https://platform.openai.com) | GPT-4o mini for generation | pay-per-use (optional) |
 | [Google AI Studio](https://aistudio.google.com) | Gemini for generation | free quota (optional) |
 
-The generator works end-to-end **without any LLM API key** via fallback mode. LLM keys only enable grounded descriptions and the Insights benchmark. **Inngest, however, runs the entire durable pipeline** — locally the Inngest dev server must be running for any crawl to execute.
+The generator works end-to-end **without any LLM API key** via fallback mode. LLM keys only enable grounded descriptions and the Insights benchmark. **Inngest, however, runs the entire durable pipeline**, locally the Inngest dev server must be running for any crawl to execute.
 
 ---
 
@@ -211,7 +203,7 @@ The repo ships a production `Dockerfile` (Next.js standalone output, non-root, m
 3. Open [http://localhost:3000](http://localhost:3000).
 
 Notes:
-- The app reaches Neon over HTTPS, so there's **no Postgres container** — just point `DATABASE_URL` at your Neon database.
+- The app reaches Neon over HTTPS, so there's **no Postgres container**, just point `DATABASE_URL` at your Neon database.
 - Migrations are **not** run by the container. Apply them separately: `npm run db:migrate` (against `DATABASE_URL_UNPOOLED`).
 - The image builds without any secrets; everything is supplied at runtime by Compose.
 
@@ -239,7 +231,7 @@ Notes:
 | `INNGEST_EVENT_KEY` | Production | Set automatically by the Inngest Vercel integration. |
 | `INNGEST_SIGNING_KEY` | Production | Set automatically by the Inngest Vercel integration. |
 
-Crawl bounds are **not** env vars — they're chosen per request from the submit form and clamped server-side (max pages 5–50, default 20; max depth 1–3, default 3). Concurrency and the 60s time budget are constants in `lib/crawler/`.
+Crawl bounds are **not** env vars, they're chosen per request from the submit form and clamped server-side (max pages 5–50, default 20; max depth 1–3, default 3). Concurrency and the 60s time budget are constants in `lib/crawler/`.
 
 ---
 
@@ -251,11 +243,11 @@ npm test
 
 [Vitest](https://vitest.dev) suite:
 
-- **SSRF guard** (`test/ssrf.test.ts`) — all blocked IP ranges (IPv4 + IPv6) and the DNS-rebinding bypass via redirect re-validation.
-- **Crawler** (`test/crawler.test.ts`) — URL normalization, same-domain link extraction, JS-shell detection, crawl-failure leniency.
-- **Extractor** (`test/extract.test.ts`) — title/meta/OG extraction, Readability, content_hash, JS-shell detection.
-- **Curator** (`test/curate.test.ts`) — page classification, scoring, section grouping.
-- **Monitor diff** (`test/monitor.test.ts`) — all four diff cases and `isMeaningfulChange`.
+- **SSRF guard** (`test/ssrf.test.ts`): all blocked IP ranges (IPv4 + IPv6) and the DNS-rebinding bypass via redirect re-validation.
+- **Crawler** (`test/crawler.test.ts`): URL normalization, same-domain link extraction, JS-shell detection, crawl-failure leniency.
+- **Extractor** (`test/extract.test.ts`): title/meta/OG extraction, Readability, content_hash, JS-shell detection.
+- **Curator** (`test/curate.test.ts`): page classification, scoring, section grouping.
+- **Monitor diff** (`test/monitor.test.ts`): all four diff cases and `isMeaningfulChange`.
 
 ---
 
@@ -274,4 +266,4 @@ The brief's explicit steer was *"correctness first; don't worry about auth; focu
 
 ## Scaling note
 
-The current architecture handles dozens of concurrent crawls comfortably. At much larger scale (thousands of sites, high-frequency recrawls) the natural bottleneck is the crawl queue, and the Inngest approach would be complemented by a Postgres `FOR UPDATE SKIP LOCKED` worker pattern — exactly-once dequeue, horizontal worker scaling, no external queue dependency. The `page_descriptions` cache (keyed by `content_hash`) already ensures unchanged pages never re-call the LLM no matter how many workers run in parallel.
+The current architecture handles dozens of concurrent crawls comfortably. At much larger scale (thousands of sites, high-frequency recrawls) the natural bottleneck is the crawl queue, and the Inngest approach would be complemented by a Postgres `FOR UPDATE SKIP LOCKED` worker pattern, exactly-once dequeue, horizontal worker scaling, no external queue dependency. The `page_descriptions` cache (keyed by `content_hash`) already ensures unchanged pages never re-call the LLM no matter how many workers run in parallel.
