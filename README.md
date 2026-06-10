@@ -7,7 +7,7 @@ Paste a website URL and get back a spec-conforming [`llms.txt`](https://llmstxt.
 
 ---
 
-## What it does
+## Features & How it Works
 
 1. **Crawls** the site with a bounded, same-origin BFS that follows in-page links from the homepage with depth and total page caps, has SSRF guarding, and a total time budget.
 2. **Curates** the most useful pages by classifying and scoring each by type, depth, inlink count, and content quality, then groups them into H2 sections.
@@ -41,49 +41,6 @@ The app is multi-page: **Generate** (submit form), **Results** (crawl history + 
 
 ---
 
-## How it works
-
-A submission (`POST /api/sites`) creates `site` + `crawl` rows and fires a `site/crawl.requested` Inngest event. The durable pipeline (`inngest/pipeline/crawl-site.ts`) then runs as checkpointed, individually-retryable steps:
-
-```
-resolve-params         carry over providers/bounds from the prior crawl on recrawls
-mark-crawling          status = crawling
-crawl-extract-persist  crawl (same-origin BFS, SSRF-guarded) → extract metadata +
-                       Readability + content_hash → store favicon → insert pages
-curate                 classify + score + select top pages, group into H2 sections
-decide-regen           diff vs. previous completed crawl → decide whether this
-                       run regenerates; if so, write a change_event
-── only if regenerating ──
-mark-generating        status = generating
-generate               for EACH selected provider, in parallel: tool-use LLM
-                       (or fallback) → one llms.txt
-persist-generation     one generations row per provider (shared version) → completed;
-                       auto-enroll the site in the daily cron
-generate-questions     if all 3 LLM providers ran: silently seed 2 Q&A pairs/model
-── otherwise ──
-discard-no-changes     delete the crawl row entirely (a no-change recrawl is never
-                       recorded); the UI toasts "no changes found" and the previous
-                       crawl + generation stay live
-```
-
-**Why Inngest?** A crawl can sometimes take more time than a serverless timeout would allow. Inngest breaks the work into durable steps where each is checkpointed and retried independently, and the whole function survives crashes. This is what makes the pipeline idempotent: writes are keyed by `crawl_id` (plus unique indexes), so a retried step never double-appends or creates a duplicate version.
-
-**Why Neon?** Serverless Postgres scales to zero between requests. The `@neondatabase/serverless` HTTP driver runs one-shot queries with no connection-pool management in app code (PgBouncer pooling lives at the Neon `-pooler` hostname).
-
-The UI polls `GET /api/crawls/:id` (~1s) for live progress, and the public `GET /<slug>/llms.txt` always serves the site's latest generation (prefers LLM output, then Claude → GPT → Gemini). Append `?provider=anthropic|openai|gemini|fallback` to pin the response to one provider's newest file, the per-model "Live URL" links in the UI use this.
-
-### Pipeline stages
-
-- **Crawler**: same-origin BFS from the homepage, bounded by max pages (5–50, default 20), max depth (1–3), and a 60s total time budget. Dedup is scheme/`www`/trailing-slash agnostic. Failures are lenient: only a crawl with zero usable pages fails.
-- **SSRF guard**: every outbound fetch resolves the hostname and rejects private/loopback/link-local ranges and the cloud metadata IP. Re-validates the resolved IP after every redirect to close DNS-rebinding bypasses.
-- **Extractor**: pulls `title`, `meta description`, OG tags, Readability `main_text`, and a SHA-256 `content_hash` from each page. Detects JS shells (SPA pages with no real content).
-- **Curator**: classifies and scores each page by type, depth, inlink count, and content quality. Drops JS shells with no metadata. Groups pages into H2 sections (via LLM if a key is present, deterministic fallback otherwise).
-- **Generation**: each selected provider runs in parallel via a shared `callWithTool` helper (tool-use + Zod validation). Descriptions are grounded in page content and cached by `content_hash` so unchanged pages skip the LLM. No API key? The fallback path uses meta descriptions and still emits a spec-valid file.
-- **Monitoring**: diffs page `content_hash` snapshots across recrawls. If nothing meaningful changed, the crawl is discarded entirely (no history row, UI toasts "no changes found"). Regenerates only when needed.
-- **Insights**: when all three LLM providers ran, each model answers the other models' factual questions about their files and votes on structure. A grader scores accuracy; structure votes add a boost. Highest total score wins 👑.
-
----
-
 ## Data model
 
 Schema in `lib/db/schema.ts`. Nine tables:
@@ -99,21 +56,6 @@ Schema in `lib/db/schema.ts`. Nine tables:
 | `model_questions` | Silent per-model Q&A pairs seeded during an all-3-provider crawl. Unique on `generation_id`. |
 | `insights` | One on-demand benchmark run per `(site_id, crawl_id)`: `status`, `winner`. |
 | `model_eval_results` | Per-provider scores for an insights run: `accuracy`, `structure_placement`, `final_score`, detailed `details` jsonb. Unique on `(insight_id, provider)`. |
-
----
-
-## Background jobs (Inngest)
-
-Four durable functions (`inngest/functions.ts`):
-
-| Function | Trigger | What it does |
-|---|---|---|
-| `crawl-site` | `site/crawl.requested` event | The full pipeline above. Automated recrawls share one serial queue slot; manual crawls each get their own. |
-| `scheduled-recrawl` | Cron `0 3 * * *` (daily) | Enqueues a recrawl for every monitored site (any site with a `schedule_cron`). |
-| `timeout-stale-crawls` | Cron `* * * * *` (per minute) | Marks any crawl stuck in `pending` for >60s as failed so the UI doesn't spin forever. |
-| `run-insights` | `site/insights.requested` event | The on-demand model-comparison benchmark. |
-
-Recrawls (manual + scheduled) fire without `providers`/bounds; `resolve-params` carries them over from the site's most recent configured crawl (defaulting to `["anthropic"]` / 20 / 3).
 
 ---
 
@@ -243,30 +185,11 @@ Crawl bounds are **not** env vars, they're chosen per request from the submit fo
 
 ## Running tests
 
+[Vitest](https://vitest.dev)
+
 ```bash
 npm test
 ```
-
-[Vitest](https://vitest.dev) suite:
-
-- **SSRF guard** (`test/ssrf.test.ts`): all blocked IP ranges (IPv4 + IPv6) and the DNS-rebinding bypass via redirect re-validation.
-- **Crawler** (`test/crawler.test.ts`): URL normalization, same-domain link extraction, JS-shell detection, crawl-failure leniency.
-- **Extractor** (`test/extract.test.ts`): title/meta/OG extraction, Readability, content_hash, JS-shell detection.
-- **Curator** (`test/curate.test.ts`): page classification, scoring, section grouping.
-- **Monitor diff** (`test/monitor.test.ts`): all four diff cases and `isMeaningfulChange`.
-
----
-
-## Non-goals (deliberate scope decisions)
-
-The brief's explicit steer was *"correctness first; don't worry about auth; focus on infra best practices."* So these are intentional omissions, not gaps:
-
-| Omitted | Reason |
-|---|---|
-| Auth / accounts / multi-tenant | Out of scope per the brief; the app is intentionally single-tenant. |
-| Billing / teams / roles | Same. |
-| Headless (JS) rendering | Static HTML only. JS-shell pages are detected, flagged, and deprioritised, not rendered (that would need persistent workers, not serverless functions). |
-| Non-HTML inputs (PDFs, etc.) | The crawler only processes HTML responses. |
 
 ---
 
